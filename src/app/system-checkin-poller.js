@@ -1,0 +1,99 @@
+const crypto = require("crypto");
+
+const { resolveSelectedAccount } = require("../adapters/channel/weixin/account-store");
+const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
+
+const DEFAULT_MIN_INTERVAL_MS = 3 * 60_000;
+const DEFAULT_MAX_INTERVAL_MS = 60 * 60_000;
+const INTERNAL_CHECKIN_TRIGGER = "判断是否要介入 Wendy。可沉默、发短微信、写日记、写入时间轴、调用米家MCP或用工具。没必要就 __SILENT__；若发微信，只输出那句。";
+
+async function runSystemCheckinPoller(config) {
+  const account = resolveSelectedAccount(config);
+  const queue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
+  const target = resolvePollerTarget({ config });
+  const minIntervalMs = readIntervalMs(process.env.CYBERBOSS_CHECKIN_MIN_INTERVAL_MS, DEFAULT_MIN_INTERVAL_MS);
+  const maxIntervalMs = Math.max(
+    minIntervalMs,
+    readIntervalMs(process.env.CYBERBOSS_CHECKIN_MAX_INTERVAL_MS, DEFAULT_MAX_INTERVAL_MS)
+  );
+
+  console.log(`[cyberboss] checkin poller ready user=${target.senderId} workspace=${target.workspaceRoot}`);
+  console.log(`[cyberboss] checkin interval range ${Math.round(minIntervalMs / 60000)}m-${Math.round(maxIntervalMs / 60000)}m`);
+
+  while (true) {
+    const delayMs = pickRandomDelayMs(minIntervalMs, maxIntervalMs);
+    const wakeAt = new Date(Date.now() + delayMs).toISOString();
+    console.log(`[cyberboss] next checkin in ${Math.round(delayMs / 60000)}m at ${wakeAt}`);
+    await sleep(delayMs);
+
+    if (queue.hasPendingForAccount(account.accountId)) {
+      console.log("[cyberboss] checkin skipped: pending system message still in queue");
+      continue;
+    }
+
+    const queued = queue.enqueue({
+      id: crypto.randomUUID(),
+      accountId: account.accountId,
+      senderId: target.senderId,
+      workspaceRoot: target.workspaceRoot,
+      text: INTERNAL_CHECKIN_TRIGGER,
+      createdAt: new Date().toISOString(),
+    });
+    console.log(`[cyberboss] checkin queued id=${queued.id}`);
+  }
+}
+
+function resolvePollerTarget({ config }) {
+  const senderId = resolveSenderId(config);
+  const workspaceRoot = resolveWorkspaceRoot(config);
+
+  if (!senderId) {
+    throw new Error("无法确定 checkin poller 的微信用户，先配置 CYBERBOSS_ALLOWED_USER_IDS");
+  }
+  if (!workspaceRoot) {
+    throw new Error("无法确定 checkin poller 的 workspace，先设置 CYBERBOSS_WORKSPACE_ROOT");
+  }
+
+  return { senderId, workspaceRoot };
+}
+
+function resolveSenderId(config) {
+  const explicit = String(process.env.CYBERBOSS_CHECKIN_USER_ID || "").trim();
+  if (explicit) {
+    return explicit;
+  }
+  if (Array.isArray(config.allowedUserIds) && config.allowedUserIds.length) {
+    return String(config.allowedUserIds[0] || "").trim();
+  }
+  return "";
+}
+
+function resolveWorkspaceRoot(config) {
+  const explicit = normalizeText(process.env.CYBERBOSS_CHECKIN_WORKSPACE);
+  if (explicit) {
+    return explicit;
+  }
+  return normalizeText(config.workspaceRoot);
+}
+
+function readIntervalMs(rawValue, fallback) {
+  const parsed = Number.parseInt(String(rawValue || ""), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function pickRandomDelayMs(minIntervalMs, maxIntervalMs) {
+  if (maxIntervalMs <= minIntervalMs) {
+    return minIntervalMs;
+  }
+  return minIntervalMs + Math.floor(Math.random() * (maxIntervalMs - minIntervalMs + 1));
+}
+
+function normalizeText(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+module.exports = { runSystemCheckinPoller };

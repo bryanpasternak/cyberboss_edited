@@ -39,6 +39,14 @@ const COMMAND_GROUPS = [
         weixin: [],
         status: "active",
       },
+      {
+        action: "system.checkin_poller",
+        summary: "按随机间隔写入主动 check-in 触发",
+        terminal: ["system checkin-poller"],
+        terminalGroup: "system",
+        weixin: [],
+        status: "active",
+      },
     ],
   },
   {

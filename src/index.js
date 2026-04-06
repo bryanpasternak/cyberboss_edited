@@ -7,6 +7,7 @@ const { readConfig } = require("./core/config");
 const { CyberbossApp } = require("./core/app");
 const { runDiaryWriteCommand } = require("./app/diary-write-cli");
 const { runReminderWriteCommand } = require("./app/reminder-write-cli");
+const { runSystemCheckinPoller } = require("./app/system-checkin-poller");
 const { runSystemSendCommand } = require("./app/system-send-cli");
 const {
   buildTerminalHelpText,
@@ -67,6 +68,10 @@ async function main() {
     }
     if (command === "system" && subcommand === "send") {
       await runSystemSendCommand(config);
+      return;
+    }
+    if (command === "system" && subcommand === "checkin-poller") {
+      await runSystemCheckinPoller(config);
       return;
     }
     throw new Error(`命令尚未接入: cyberboss ${command} ${subcommand}`);
