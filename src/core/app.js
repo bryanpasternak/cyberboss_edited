@@ -28,11 +28,26 @@ class CyberbossApp {
   }
 
   async start() {
-    console.log("[cyberboss] bootstrap ok");
-    console.log(`[cyberboss] channel=${this.channelAdapter.describe().id}`);
-    console.log(`[cyberboss] runtime=${this.runtimeAdapter.describe().id}`);
-    console.log(`[cyberboss] timeline=${this.timelineIntegration.describe().id}`);
-    console.log("[cyberboss] 当前还是骨架阶段，后续会把现有实现逐步迁进来。");
+    try {
+      const account = this.channelAdapter.resolveAccount();
+      const runtimeState = await this.runtimeAdapter.initialize();
+      const knownContextTokens = Object.keys(this.channelAdapter.getKnownContextTokens()).length;
+      const syncBuffer = this.channelAdapter.loadSyncBuffer();
+
+      console.log("[cyberboss] bootstrap ok");
+      console.log(`[cyberboss] channel=${this.channelAdapter.describe().id}`);
+      console.log(`[cyberboss] runtime=${this.runtimeAdapter.describe().id}`);
+      console.log(`[cyberboss] timeline=${this.timelineIntegration.describe().id}`);
+      console.log(`[cyberboss] account=${account.accountId}`);
+      console.log(`[cyberboss] baseUrl=${account.baseUrl}`);
+      console.log(`[cyberboss] knownContextTokens=${knownContextTokens}`);
+      console.log(`[cyberboss] syncBuffer=${syncBuffer ? "ready" : "empty"}`);
+      console.log(`[cyberboss] codexEndpoint=${runtimeState.endpoint}`);
+      console.log(`[cyberboss] codexModels=${runtimeState.models.length}`);
+      console.log("[cyberboss] 底层初始化完成，下一步开始接最小消息链路。");
+    } finally {
+      await this.runtimeAdapter.close();
+    }
   }
 }
 

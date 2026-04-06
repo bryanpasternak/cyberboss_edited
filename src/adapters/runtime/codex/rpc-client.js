@@ -156,6 +156,26 @@ class CodexRpcClient {
     return this.sendRequest("model/list", {});
   }
 
+  async close() {
+    if (this.socket) {
+      try {
+        this.socket.close();
+      } catch {
+        // best effort
+      }
+      this.socket = null;
+    }
+    if (this.child) {
+      try {
+        this.child.kill();
+      } catch {
+        // best effort
+      }
+      this.child = null;
+    }
+    this.isReady = false;
+  }
+
   async sendRequest(method, params) {
     const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
     const payload = JSON.stringify({ id, method, params });
@@ -316,4 +336,3 @@ function buildExecutionPolicies(accessMode, workspaceRoot) {
 }
 
 module.exports = { CodexRpcClient };
-
