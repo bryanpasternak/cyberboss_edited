@@ -3,6 +3,8 @@ const crypto = require("crypto");
 const { resolveSelectedAccount } = require("../adapters/channel/weixin/account-store");
 const { loadPersistedContextTokens } = require("../adapters/channel/weixin/context-token-store");
 const { ReminderQueueStore } = require("../adapters/channel/weixin/reminder-queue-store");
+const { SessionStore } = require("../adapters/runtime/codex/session-store");
+const { resolvePreferredSenderId } = require("../core/default-targets");
 
 const DELAY_UNIT_MS = {
   s: 1_000,
@@ -25,9 +27,15 @@ async function runReminderWriteCommand(config) {
   }
 
   const account = resolveSelectedAccount(config);
-  const senderId = resolveSenderId(config, options.user);
+  const sessionStore = new SessionStore({ filePath: config.sessionsFile });
+  const senderId = resolvePreferredSenderId({
+    config,
+    accountId: account.accountId,
+    explicitUser: options.user,
+    sessionStore,
+  });
   if (!senderId) {
-    throw new Error("无法确定 reminder 的微信用户，传 --user 或配置 CYBERBOSS_ALLOWED_USER_IDS");
+    throw new Error("无法确定 reminder 的微信用户，传 --user 或先让唯一活跃用户和 bot 聊过一次");
   }
 
   const contextTokens = loadPersistedContextTokens(config, account.accountId);
@@ -105,17 +113,6 @@ async function resolveBody(options) {
     return "";
   }
   return normalizeBody(await readStdin());
-}
-
-function resolveSenderId(config, explicitUser) {
-  const explicit = String(explicitUser || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-  if (Array.isArray(config.allowedUserIds) && config.allowedUserIds.length) {
-    return String(config.allowedUserIds[0] || "").trim();
-  }
-  return "";
 }
 
 function readStdin() {

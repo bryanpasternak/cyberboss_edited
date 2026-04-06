@@ -2,7 +2,6 @@ const MESSAGE_TYPE_USER = 1;
 const MESSAGE_TYPE_BOT = 2;
 const MESSAGE_ITEM_TEXT = 1;
 const MESSAGE_ITEM_VOICE = 3;
-const START_TIME = Date.now();
 const DEDUP_TTL_MS = 5 * 60_000;
 
 function createInboundFilter() {
@@ -27,9 +26,6 @@ function createInboundFilter() {
       }
 
       const createdAtMs = normalizeMessageTimestampMs(message);
-      if (createdAtMs && createdAtMs < START_TIME - 2_000) {
-        return null;
-      }
 
       const dedupKey = buildDedupKey(message, senderId, createdAtMs);
       pruneSeen(seen);

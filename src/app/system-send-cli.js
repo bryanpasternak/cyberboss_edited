@@ -1,8 +1,11 @@
 const crypto = require("crypto");
 const fs = require("fs");
+const path = require("path");
 
 const { resolveSelectedAccount } = require("../adapters/channel/weixin/account-store");
 const { loadPersistedContextTokens } = require("../adapters/channel/weixin/context-token-store");
+const { SessionStore } = require("../adapters/runtime/codex/session-store");
+const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("../core/default-targets");
 const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
 
 async function runSystemSendCommand(config) {
@@ -12,12 +15,28 @@ async function runSystemSendCommand(config) {
     return;
   }
 
-  const senderId = options.user || resolveDefaultUser(config);
+  const account = resolveSelectedAccount(config);
+  const sessionStore = new SessionStore({ filePath: config.sessionsFile });
+  const senderId = resolvePreferredSenderId({
+    config,
+    accountId: account.accountId,
+    explicitUser: options.user,
+    sessionStore,
+  });
   const text = options.text;
-  const workspaceRoot = normalizeWorkspacePath(options.workspace || config.workspaceRoot || "");
+  const workspaceRoot = resolvePreferredWorkspaceRoot({
+    config,
+    accountId: account.accountId,
+    senderId,
+    explicitWorkspace: options.workspace,
+    sessionStore,
+  });
   if (!senderId || !text || !workspaceRoot) {
     printSystemSendHelp();
     throw new Error("system send 缺少必要参数");
+  }
+  if (!path.isAbsolute(workspaceRoot)) {
+    throw new Error(`workspace 必须是绝对路径: ${workspaceRoot}`);
   }
 
   let workspaceStats = null;
@@ -30,7 +49,6 @@ async function runSystemSendCommand(config) {
     throw new Error(`workspace 不是目录: ${workspaceRoot}`);
   }
 
-  const account = resolveSelectedAccount(config);
   const contextTokens = loadPersistedContextTokens(config, account.accountId);
   if (!contextTokens[senderId]) {
     throw new Error(`找不到用户 ${senderId} 的 context token，先让这个用户和 bot 聊过一次`);
@@ -106,13 +124,6 @@ function printSystemSendHelp() {
 
 function normalizeWorkspacePath(value) {
   return typeof value === "string" ? value.trim() : "";
-}
-
-function resolveDefaultUser(config) {
-  if (Array.isArray(config.allowedUserIds) && config.allowedUserIds.length) {
-    return String(config.allowedUserIds[0] || "").trim();
-  }
-  return "";
 }
 
 module.exports = { runSystemSendCommand };

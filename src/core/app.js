@@ -7,6 +7,7 @@ const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
 const { buildWeixinHelpText } = require("./command-registry");
+const { resolvePreferredSenderId } = require("./default-targets");
 const { StreamDelivery } = require("./stream-delivery");
 const { ThreadStateStore } = require("./thread-state-store");
 const { SystemMessageQueueStore } = require("./system-message-queue-store");
@@ -22,6 +23,10 @@ const {
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
+const SESSION_EXPIRED_ERRCODE = -14;
+const RETRY_DELAY_MS = 2_000;
+const BACKOFF_DELAY_MS = 30_000;
+const MAX_CONSECUTIVE_FAILURES = 3;
 
 class CyberbossApp {
   constructor(config) {
@@ -100,22 +105,39 @@ class CyberbossApp {
     });
 
     try {
+      let consecutiveFailures = 0;
       while (!shutdown.stopped) {
-        await this.flushDueReminders(account);
-        await this.flushPendingSystemMessages();
-        const response = await this.channelAdapter.getUpdates({
-          syncBuffer: this.channelAdapter.loadSyncBuffer(),
-          timeoutMs: this.resolveLongPollTimeoutMs(),
-        });
-        const messages = Array.isArray(response?.msgs) ? response.msgs : [];
-        for (const message of messages) {
+        try {
+          await this.flushDueReminders(account);
+          await this.flushPendingSystemMessages();
+          const response = await this.channelAdapter.getUpdates({
+            syncBuffer: this.channelAdapter.loadSyncBuffer(),
+            timeoutMs: this.resolveLongPollTimeoutMs(),
+          });
+          assertWeixinUpdateResponse(response);
+          consecutiveFailures = 0;
+          const messages = Array.isArray(response?.msgs) ? response.msgs : [];
+          for (const message of messages) {
+            if (shutdown.stopped) {
+              break;
+            }
+            await this.handleIncomingMessage(message);
+          }
+          await this.flushDueReminders(account);
+          await this.flushPendingSystemMessages();
+        } catch (error) {
           if (shutdown.stopped) {
             break;
           }
-          await this.handleIncomingMessage(message);
+
+          if (isSessionExpiredError(error)) {
+            throw new Error("微信会话已失效，请重新执行 `npm run login`");
+          }
+
+          consecutiveFailures += 1;
+          console.error(`[cyberboss] poll failed: ${formatErrorMessage(error)}`);
+          await sleep(consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ? BACKOFF_DELAY_MS : RETRY_DELAY_MS);
         }
-        await this.flushDueReminders(account);
-        await this.flushPendingSystemMessages();
       }
     } finally {
       shutdown.dispose();
@@ -161,10 +183,11 @@ class CyberbossApp {
   }
 
   resolveDefaultTerminalUser() {
-    if (Array.isArray(this.config.allowedUserIds) && this.config.allowedUserIds.length) {
-      return String(this.config.allowedUserIds[0] || "").trim();
-    }
-    return "";
+    return resolvePreferredSenderId({
+      config: this.config,
+      accountId: this.channelAdapter.resolveAccount().accountId,
+      sessionStore: this.runtimeAdapter.getSessionStore(),
+    });
   }
 
   async handlePreparedMessage(normalized, { allowCommands }) {
@@ -732,6 +755,48 @@ function createShutdownController(onStop) {
       process.off("SIGTERM", handleSignal);
     },
   };
+}
+
+function assertWeixinUpdateResponse(response) {
+  const ret = normalizeErrorCode(response?.ret);
+  const errcode = normalizeErrorCode(response?.errcode);
+  if ((ret !== 0 && ret !== null) || (errcode !== 0 && errcode !== null)) {
+    const error = new Error(
+      `weixin getUpdates ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${normalizeText(response?.errmsg) || ""}`
+    );
+    error.ret = ret;
+    error.errcode = errcode;
+    throw error;
+  }
+}
+
+function isSessionExpiredError(error) {
+  const ret = normalizeErrorCode(error?.ret);
+  const errcode = normalizeErrorCode(error?.errcode);
+  return ret === SESSION_EXPIRED_ERRCODE
+    || errcode === SESSION_EXPIRED_ERRCODE
+    || String(error?.message || "").includes("session expired")
+    || String(error?.message || "").includes("会话已失效");
+}
+
+function normalizeErrorCode(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+}
+
+function formatErrorMessage(error) {
+  const raw = error instanceof Error ? error.message : String(error || "unknown error");
+  if (isSessionExpiredError(error)) {
+    return "微信会话已失效，请重新执行 `npm run login`";
+  }
+  return raw;
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 module.exports = { CyberbossApp };

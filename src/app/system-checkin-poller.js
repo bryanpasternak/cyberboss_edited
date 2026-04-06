@@ -2,6 +2,7 @@ const crypto = require("crypto");
 
 const { resolveSelectedAccount } = require("../adapters/channel/weixin/account-store");
 const { SessionStore } = require("../adapters/runtime/codex/session-store");
+const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("../core/default-targets");
 const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
 
 const DEFAULT_MIN_INTERVAL_MS = 3 * 60_000;
@@ -45,47 +46,28 @@ async function runSystemCheckinPoller(config) {
 }
 
 function resolvePollerTarget({ config, account, sessionStore }) {
-  const senderId = resolveSenderId(config);
-  const workspaceRoot = resolveWorkspaceRoot(config, account, sessionStore, senderId);
+  const senderId = resolvePreferredSenderId({
+    config,
+    accountId: account.accountId,
+    explicitUser: process.env.CYBERBOSS_CHECKIN_USER_ID || "",
+    sessionStore,
+  });
+  const workspaceRoot = resolvePreferredWorkspaceRoot({
+    config,
+    accountId: account.accountId,
+    senderId,
+    explicitWorkspace: process.env.CYBERBOSS_CHECKIN_WORKSPACE || "",
+    sessionStore,
+  });
 
   if (!senderId) {
-    throw new Error("无法确定 checkin poller 的微信用户，先配置 CYBERBOSS_ALLOWED_USER_IDS");
+    throw new Error("无法确定 checkin poller 的微信用户，先配置 CYBERBOSS_CHECKIN_USER_ID 或让唯一活跃用户先和 bot 聊过一次");
   }
   if (!workspaceRoot) {
     throw new Error("无法确定 checkin poller 的 workspace，先设置 CYBERBOSS_WORKSPACE_ROOT");
   }
 
   return { senderId, workspaceRoot };
-}
-
-function resolveSenderId(config) {
-  const explicit = String(process.env.CYBERBOSS_CHECKIN_USER_ID || "").trim();
-  if (explicit) {
-    return explicit;
-  }
-  if (Array.isArray(config.allowedUserIds) && config.allowedUserIds.length) {
-    return String(config.allowedUserIds[0] || "").trim();
-  }
-  return "";
-}
-
-function resolveWorkspaceRoot(config, account, sessionStore, senderId) {
-  const explicit = normalizeText(process.env.CYBERBOSS_CHECKIN_WORKSPACE);
-  if (explicit) {
-    return explicit;
-  }
-
-  const bindingKey = sessionStore.buildBindingKey({
-    workspaceId: config.workspaceId,
-    accountId: account.accountId,
-    senderId,
-  });
-  const activeWorkspaceRoot = normalizeText(sessionStore.getActiveWorkspaceRoot(bindingKey));
-  if (activeWorkspaceRoot) {
-    return activeWorkspaceRoot;
-  }
-
-  return normalizeText(config.workspaceRoot);
 }
 
 function readIntervalMs(rawValue, fallback) {
