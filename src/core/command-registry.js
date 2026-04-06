@@ -129,21 +129,48 @@ const COMMAND_GROUPS = [
       {
         action: "timeline.write",
         summary: "将当前上下文写入时间轴",
-        terminal: [],
+        terminal: ["timeline write"],
+        terminalGroup: "timeline",
+        weixin: [],
+        status: "planned",
+      },
+      {
+        action: "timeline.build",
+        summary: "构建时间轴静态页面",
+        terminal: ["timeline build"],
+        terminalGroup: "timeline",
+        weixin: [],
+        status: "planned",
+      },
+      {
+        action: "timeline.serve",
+        summary: "启动时间轴静态页面服务",
+        terminal: ["timeline serve"],
+        terminalGroup: "timeline",
+        weixin: [],
+        status: "planned",
+      },
+      {
+        action: "timeline.screenshot",
+        summary: "截图时间轴页面",
+        terminal: ["timeline screenshot"],
+        terminalGroup: "timeline",
         weixin: [],
         status: "planned",
       },
       {
         action: "reminder.create",
         summary: "创建提醒并交给调度层处理",
-        terminal: [],
+        terminal: ["reminder write"],
+        terminalGroup: "reminder",
         weixin: [],
         status: "planned",
       },
       {
         action: "diary.append",
         summary: "追加一条日记记录",
-        terminal: [],
+        terminal: ["diary write"],
+        terminalGroup: "diary",
         weixin: [],
         status: "planned",
       },
@@ -183,12 +210,73 @@ function buildTerminalHelpText() {
     }
   }
 
+  const plannedGroups = collectPlannedTerminalGroups();
+  if (plannedGroups.length) {
+    lines.push("");
+    lines.push("规划中的终端子命令：");
+    for (const group of plannedGroups) {
+      lines.push(`- ${group.name}`);
+      for (const action of group.actions) {
+        lines.push(`  ${action.terminal.join(", ")}  ${action.summary}`);
+      }
+    }
+  }
+
   lines.push("");
   lines.push("微信命令映射与后续能力动作请看 README / docs。");
   return lines.join("\n");
 }
 
+function buildTerminalTopicHelp(topic) {
+  const normalizedTopic = normalizeTopic(topic);
+  const actions = COMMAND_GROUPS
+    .flatMap((group) => group.actions)
+    .filter((action) => normalizeTopic(action.terminalGroup) === normalizedTopic && action.terminal.length);
+
+  if (!actions.length) {
+    return "";
+  }
+
+  const lines = [
+    `用法: cyberboss ${normalizedTopic} <子命令>`,
+    "",
+    `当前 ${normalizedTopic} 命令仍在接入中，计划中的子命令：`,
+  ];
+  for (const action of actions) {
+    lines.push(`- ${action.terminal.join(", ")}  ${action.summary}`);
+  }
+  return lines.join("\n");
+}
+
+function isPlannedTerminalTopic(topic) {
+  const normalizedTopic = normalizeTopic(topic);
+  return COMMAND_GROUPS
+    .flatMap((group) => group.actions)
+    .some((action) => normalizeTopic(action.terminalGroup) === normalizedTopic && action.terminal.length);
+}
+
+function collectPlannedTerminalGroups() {
+  const grouped = new Map();
+  for (const action of COMMAND_GROUPS.flatMap((group) => group.actions)) {
+    if (!action.terminal.length || !action.terminalGroup) {
+      continue;
+    }
+    const key = action.terminalGroup;
+    if (!grouped.has(key)) {
+      grouped.set(key, { name: key, actions: [] });
+    }
+    grouped.get(key).actions.push(action);
+  }
+  return Array.from(grouped.values());
+}
+
+function normalizeTopic(value) {
+  return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
 module.exports = {
   buildTerminalHelpText,
+  buildTerminalTopicHelp,
+  isPlannedTerminalTopic,
   listCommandGroups,
 };

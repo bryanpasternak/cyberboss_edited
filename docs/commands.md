@@ -55,6 +55,27 @@
 - `cyberboss doctor`
 - `cyberboss help`
 
+## 规划中的终端子命令
+
+为了避免继续把所有能力都平铺在顶层，后续命令会按能力分组：
+
+### timeline
+
+- `cyberboss timeline write`
+- `cyberboss timeline build`
+- `cyberboss timeline serve`
+- `cyberboss timeline screenshot`
+
+### reminder
+
+- `cyberboss reminder write`
+
+### diary
+
+- `cyberboss diary write`
+
+当前这些子命令只预留命名和帮助，不代表功能已经完全接入。
+
 ## 计划中的微信命令
 
 第一批仅考虑：

@@ -5,7 +5,11 @@ const dotenv = require("dotenv");
 
 const { readConfig } = require("./core/config");
 const { CyberbossApp } = require("./core/app");
-const { buildTerminalHelpText } = require("./core/command-registry");
+const {
+  buildTerminalHelpText,
+  buildTerminalTopicHelp,
+  isPlannedTerminalTopic,
+} = require("./core/command-registry");
 
 function ensureDefaultStateDirectory() {
   fs.mkdirSync(path.join(os.homedir(), ".cyberboss"), { recursive: true });
@@ -33,12 +37,24 @@ function printHelp() {
 
 async function main() {
   loadEnv();
+  const argv = process.argv.slice(2);
   const config = readConfig();
   const command = config.mode || "help";
+  const subcommand = argv[1] || "";
 
   if (command === "help" || command === "--help" || command === "-h") {
-    printHelp();
+    const topicHelp = subcommand ? buildTerminalTopicHelp(subcommand) : "";
+    console.log(topicHelp || buildTerminalHelpText());
     return;
+  }
+
+  if (isPlannedTerminalTopic(command)) {
+    const topicHelp = buildTerminalTopicHelp(command);
+    if (subcommand === "help" || !subcommand) {
+      console.log(topicHelp);
+      return;
+    }
+    throw new Error(`命令尚未接入: cyberboss ${command} ${subcommand}`);
   }
 
   const app = new CyberbossApp(config);

@@ -61,7 +61,18 @@ node ./bin/cyberboss.js doctor
 node ./bin/cyberboss.js help
 ```
 
-目前终端只保留启动和诊断相关命令，不把提醒、日记、时间轴直接平铺到主命令面。
+目前终端只把启动和诊断平铺在顶层，不把提醒、日记、时间轴继续堆成一排顶层命令。
+
+后续能力会下沉成子命令，例如：
+
+```bash
+cyberboss timeline write
+cyberboss timeline build
+cyberboss reminder write
+cyberboss diary write
+```
+
+当前这些子命令入口已经预留，但执行能力还在后续接入。
 
 ### 3. 计划中的微信命令映射
 
