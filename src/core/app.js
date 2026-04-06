@@ -9,6 +9,12 @@ const { ThreadStateStore } = require("./thread-state-store");
 const { SystemMessageQueueStore } = require("./system-message-queue-store");
 const { SystemMessageDispatcher } = require("./system-message-dispatcher");
 const { ReminderQueueStore } = require("../adapters/channel/weixin/reminder-queue-store");
+const {
+  createReminderInterpreter,
+  formatDelayText,
+  looksLikeReminderIntent,
+  resolveReminderDueAtMs,
+} = require("./reminder-interpreter");
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
@@ -23,6 +29,7 @@ class CyberbossApp {
     this.systemMessageQueue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
     this.reminderQueue = new ReminderQueueStore({ filePath: config.reminderQueueFile });
     this.systemMessageDispatcher = null;
+    this.reminderInterpreter = null;
     this.streamDelivery = new StreamDelivery({
       channelAdapter: this.channelAdapter,
       sessionStore: this.runtimeAdapter.getSessionStore(),
@@ -76,6 +83,9 @@ class CyberbossApp {
     console.log("[cyberboss] 最小消息链路已启动，正在等待微信消息。");
 
     const shutdown = createShutdownController(async () => {
+      if (this.reminderInterpreter) {
+        await this.reminderInterpreter.close().catch(() => {});
+      }
       await this.runtimeAdapter.close();
     });
 
@@ -113,6 +123,10 @@ class CyberbossApp {
   }
 
   async handlePreparedMessage(normalized, { allowCommands }) {
+    if (allowCommands && await this.tryHandleReminderIntent(normalized)) {
+      return;
+    }
+
     const command = parseChannelCommand(normalized.text);
     if (allowCommands && command) {
       await this.dispatchChannelCommand(normalized, command);
@@ -180,6 +194,71 @@ class CyberbossApp {
         this.systemMessageDispatcher?.requeue(message);
       }
     }
+  }
+
+  async tryHandleReminderIntent(normalized) {
+    if (!looksLikeReminderIntent(normalized.text)) {
+      return false;
+    }
+
+    const parsed = await this.interpretReminderWithModel(normalized.text).catch(() => null);
+    if (!parsed || !parsed.schedule) {
+      return false;
+    }
+
+    const dueAtMs = resolveReminderDueAtMs(parsed);
+    if (!Number.isFinite(dueAtMs) || dueAtMs <= Date.now()) {
+      return false;
+    }
+
+    await this.createReminderFromInterpretation(normalized, {
+      dueAtMs,
+      text: parsed.message,
+    });
+    return true;
+  }
+
+  async ensureReminderInterpreter() {
+    if (this.reminderInterpreter) {
+      return this.reminderInterpreter;
+    }
+    const interpreter = createReminderInterpreter(this.config);
+    await interpreter.connect();
+    this.reminderInterpreter = interpreter;
+    return interpreter;
+  }
+
+  async interpretReminderWithModel(userText) {
+    const interpreter = await this.ensureReminderInterpreter();
+    return interpreter.interpret(userText);
+  }
+
+  async createReminderFromInterpretation(normalized, parsed) {
+    const contextToken = normalized.contextToken || this.channelAdapter.getKnownContextTokens()[normalized.senderId] || "";
+    if (!contextToken) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: "当前缺少 context_token，暂时无法创建提醒。",
+        contextToken: normalized.contextToken,
+      }).catch(() => {});
+      return;
+    }
+
+    const reminder = this.reminderQueue.enqueue({
+      id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+      accountId: normalized.accountId,
+      senderId: normalized.senderId,
+      contextToken,
+      text: String(parsed.text || "").trim(),
+      dueAtMs: parsed.dueAtMs,
+      createdAt: new Date().toISOString(),
+    });
+
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: `已加入提醒队列。\n\n时间: ${formatDelayText(reminder.dueAtMs - Date.now())} 后\n内容: ${reminder.text}`,
+      contextToken: normalized.contextToken,
+    }).catch(() => {});
   }
 
   resolveLongPollTimeoutMs() {
