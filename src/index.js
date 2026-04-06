@@ -35,12 +35,19 @@ function loadEnv() {
   dotenv.config();
 }
 
+function ensureRuntimeEnv() {
+  if (!process.env.CYBERBOSS_HOME) {
+    process.env.CYBERBOSS_HOME = path.resolve(__dirname, "..");
+  }
+}
+
 function printHelp() {
   console.log(buildTerminalHelpText());
 }
 
 async function main() {
   loadEnv();
+  ensureRuntimeEnv();
   const argv = process.argv.slice(2);
   const config = readConfig();
   const command = config.mode || "help";
