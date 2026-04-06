@@ -1,0 +1,26 @@
+{
+  "name": "cyberboss",
+  "version": "0.1.0",
+  "description": "A personal agent bridge core for life operations.",
+  "license": "MIT",
+  "private": false,
+  "type": "commonjs",
+  "main": "src/index.js",
+  "bin": {
+    "cyberboss": "./bin/cyberboss.js"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "start": "node ./bin/cyberboss.js start",
+    "login": "node ./bin/cyberboss.js login",
+    "accounts": "node ./bin/cyberboss.js accounts",
+    "doctor": "node ./bin/cyberboss.js doctor",
+    "check": "node --check ./src/index.js && node --check ./src/core/config.js && node --check ./src/core/app.js && node --check ./src/adapters/channel/weixin/index.js && node --check ./src/adapters/channel/weixin/api.js && node --check ./src/adapters/channel/weixin/login.js && node --check ./src/adapters/channel/weixin/account-store.js && node --check ./src/adapters/channel/weixin/context-token-store.js && node --check ./src/adapters/channel/weixin/redact.js && node --check ./src/adapters/runtime/codex/index.js && node --check ./src/integrations/timeline/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.7",
+    "qrcode-terminal": "0.12.0"
+  }
+}
