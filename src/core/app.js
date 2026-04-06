@@ -8,6 +8,10 @@ const { StreamDelivery } = require("./stream-delivery");
 const { ThreadStateStore } = require("./thread-state-store");
 const { SystemMessageQueueStore } = require("./system-message-queue-store");
 const { SystemMessageDispatcher } = require("./system-message-dispatcher");
+const { ReminderQueueStore } = require("../adapters/channel/weixin/reminder-queue-store");
+
+const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
+const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
 
 class CyberbossApp {
   constructor(config) {
@@ -17,6 +21,7 @@ class CyberbossApp {
     this.timelineIntegration = createTimelineIntegration(config);
     this.threadStateStore = new ThreadStateStore();
     this.systemMessageQueue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
+    this.reminderQueue = new ReminderQueueStore({ filePath: config.reminderQueueFile });
     this.systemMessageDispatcher = null;
     this.streamDelivery = new StreamDelivery({
       channelAdapter: this.channelAdapter,
@@ -76,9 +81,11 @@ class CyberbossApp {
 
     try {
       while (!shutdown.stopped) {
+        await this.flushDueReminders(account);
         await this.flushPendingSystemMessages();
         const response = await this.channelAdapter.getUpdates({
           syncBuffer: this.channelAdapter.loadSyncBuffer(),
+          timeoutMs: this.resolveLongPollTimeoutMs(),
         });
         const messages = Array.isArray(response?.msgs) ? response.msgs : [];
         for (const message of messages) {
@@ -87,6 +94,7 @@ class CyberbossApp {
           }
           await this.handleIncomingMessage(message);
         }
+        await this.flushDueReminders(account);
         await this.flushPendingSystemMessages();
       }
     } finally {
@@ -172,6 +180,56 @@ class CyberbossApp {
         this.systemMessageDispatcher?.requeue(message);
       }
     }
+  }
+
+  resolveLongPollTimeoutMs() {
+    if (this.systemMessageDispatcher?.hasPending()) {
+      return MIN_LONG_POLL_TIMEOUT_MS;
+    }
+
+    const nextDueAtMs = this.reminderQueue.peekNextDueAtMs();
+    if (!nextDueAtMs) {
+      return DEFAULT_LONG_POLL_TIMEOUT_MS;
+    }
+
+    const remainingMs = nextDueAtMs - Date.now();
+    if (remainingMs <= MIN_LONG_POLL_TIMEOUT_MS) {
+      return MIN_LONG_POLL_TIMEOUT_MS;
+    }
+    return Math.max(MIN_LONG_POLL_TIMEOUT_MS, Math.min(DEFAULT_LONG_POLL_TIMEOUT_MS, remainingMs));
+  }
+
+  async flushDueReminders(account) {
+    const dueReminders = this.reminderQueue
+      .listDue(Date.now())
+      .filter((reminder) => reminder.accountId === account.accountId);
+
+    for (const reminder of dueReminders) {
+      try {
+        this.systemMessageQueue.enqueue({
+          id: `reminder:${reminder.id}`,
+          accountId: reminder.accountId,
+          senderId: reminder.senderId,
+          workspaceRoot: this.resolveReminderWorkspaceRoot(reminder),
+          text: buildReminderSystemTrigger(reminder),
+          createdAt: new Date().toISOString(),
+        });
+      } catch {
+        this.reminderQueue.enqueue({
+          ...reminder,
+          dueAtMs: Date.now() + 5_000,
+        });
+      }
+    }
+  }
+
+  resolveReminderWorkspaceRoot(reminder) {
+    const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
+      workspaceId: this.config.workspaceId,
+      accountId: reminder.accountId,
+      senderId: reminder.senderId,
+    });
+    return this.runtimeAdapter.getSessionStore().getActiveWorkspaceRoot(bindingKey) || this.config.workspaceRoot;
   }
 
   async dispatchSystemMessage(message) {
@@ -599,4 +657,9 @@ function matchesCommandPrefix(commandTokens, allowlist) {
     }
     return prefix.every((part, index) => normalizeCommandArgument(part) === normalizedCommandTokens[index]);
   });
+}
+
+function buildReminderSystemTrigger(reminder) {
+  const reminderText = String(reminder?.text || "").trim();
+  return `这条 reminder 已到期。\n内容：${reminderText}`;
 }

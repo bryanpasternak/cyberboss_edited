@@ -44,6 +44,33 @@ class ReminderQueueStore {
     this.save();
     return normalized;
   }
+
+  listDue(nowMs = Date.now()) {
+    this.load();
+    const due = [];
+    const pending = [];
+
+    for (const reminder of this.state.reminders) {
+      if (reminder.dueAtMs <= nowMs) {
+        due.push(reminder);
+      } else {
+        pending.push(reminder);
+      }
+    }
+
+    if (due.length) {
+      this.state.reminders = pending;
+      this.save();
+    }
+
+    return due;
+  }
+
+  peekNextDueAtMs() {
+    this.load();
+    const first = this.state.reminders[0];
+    return Number.isFinite(first?.dueAtMs) ? first.dueAtMs : 0;
+  }
 }
 
 function normalizeReminder(reminder) {
