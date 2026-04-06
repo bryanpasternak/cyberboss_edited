@@ -110,21 +110,21 @@ const COMMAND_GROUPS = [
         summary: "查看当前模型",
         terminal: [],
         weixin: ["/model"],
-        status: "planned",
+        status: "active",
       },
       {
         action: "model.select",
         summary: "切换到指定模型",
         terminal: [],
         weixin: ["/model <id>"],
-        status: "planned",
+        status: "active",
       },
       {
         action: "channel.send_file",
         summary: "将工作区文件发送回当前聊天",
         terminal: [],
         weixin: ["/send <path>"],
-        status: "planned",
+        status: "active",
       },
       {
         action: "timeline.write",
@@ -227,6 +227,22 @@ function buildTerminalHelpText() {
   return lines.join("\n");
 }
 
+function buildWeixinHelpText() {
+  const lines = ["当前可用命令："];
+  for (const group of COMMAND_GROUPS) {
+    const activeActions = group.actions.filter((action) => action.status === "active" && action.weixin.length);
+    if (!activeActions.length) {
+      continue;
+    }
+    lines.push("");
+    lines.push(`${group.label}：`);
+    for (const action of activeActions) {
+      lines.push(`- ${action.weixin.join(", ")}  ${action.summary}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 function buildTerminalTopicHelp(topic) {
   const normalizedTopic = normalizeTopic(topic);
   const actions = COMMAND_GROUPS
@@ -277,6 +293,7 @@ function normalizeTopic(value) {
 module.exports = {
   buildTerminalHelpText,
   buildTerminalTopicHelp,
+  buildWeixinHelpText,
   isPlannedTerminalTopic,
   listCommandGroups,
 };

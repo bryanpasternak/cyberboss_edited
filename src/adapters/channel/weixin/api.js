@@ -122,6 +122,31 @@ async function sendMessage(params) {
   assertApiSuccess(parseApiJson(rawText, "sendMessage"), "sendMessage");
 }
 
+async function getUploadUrl(params) {
+  const rawText = await apiFetch({
+    baseUrl: params.baseUrl,
+    endpoint: "ilink/bot/getuploadurl",
+    body: JSON.stringify({
+      filekey: params.filekey,
+      media_type: params.media_type,
+      to_user_id: params.to_user_id,
+      rawsize: params.rawsize,
+      rawfilemd5: params.rawfilemd5,
+      filesize: params.filesize,
+      thumb_rawsize: params.thumb_rawsize,
+      thumb_rawfilemd5: params.thumb_rawfilemd5,
+      thumb_filesize: params.thumb_filesize,
+      no_need_thumb: params.no_need_thumb,
+      aeskey: params.aeskey,
+      base_info: buildBaseInfo(),
+    }),
+    token: params.token,
+    timeoutMs: params.timeoutMs || DEFAULT_API_TIMEOUT_MS,
+    label: "getUploadUrl",
+  });
+  return assertApiSuccess(parseApiJson(rawText, "getUploadUrl"), "getUploadUrl");
+}
+
 async function getConfig(params) {
   const rawText = await apiFetch({
     baseUrl: params.baseUrl,
@@ -153,8 +178,8 @@ async function sendTyping(params) {
 module.exports = {
   buildBaseInfo,
   getConfig,
+  getUploadUrl,
   getUpdates,
   sendMessage,
   sendTyping,
 };
-

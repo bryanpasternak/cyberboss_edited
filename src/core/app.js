@@ -1,7 +1,10 @@
 const fs = require("fs");
+const path = require("path");
 const { createWeixinChannelAdapter } = require("../adapters/channel/weixin");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
+const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
+const { buildWeixinHelpText } = require("./command-registry");
 const { ThreadStateStore } = require("./thread-state-store");
 
 class CyberbossApp {
@@ -107,6 +110,7 @@ class CyberbossApp {
         bindingKey,
         workspaceRoot,
         text: normalized.text,
+        model: this.runtimeAdapter.getSessionStore().getCodexParamsForWorkspace(bindingKey, workspaceRoot).model,
         metadata: {
           workspaceId: normalized.workspaceId,
           accountId: normalized.accountId,
@@ -156,10 +160,19 @@ class CyberbossApp {
       case "no":
         await this.handleApprovalCommand(normalized, command);
         return;
+      case "model":
+        await this.handleModelCommand(normalized, command);
+        return;
+      case "send":
+        await this.handleSendCommand(normalized, command);
+        return;
+      case "help":
+        await this.handleHelpCommand(normalized);
+        return;
       default:
         await this.channelAdapter.sendText({
           userId: normalized.senderId,
-          text: "当前支持：/bind /绝对路径、/status、/new、/switch <threadId>、/stop、/yes、/always、/no",
+          text: buildWeixinHelpText(),
           contextToken: normalized.contextToken,
         });
     }
@@ -221,6 +234,7 @@ class CyberbossApp {
       `workspace: ${workspaceRoot}`,
       `thread: ${threadId || "(none)"}`,
       `status: ${threadState?.status || "idle"}`,
+      `model: ${this.runtimeAdapter.getSessionStore().getCodexParamsForWorkspace(bindingKey, workspaceRoot).model || "(default)"}`,
       `reply: ${threadState?.lastReplyText || "(none)"}`,
       "usage: (待接入)",
     ];
@@ -335,6 +349,122 @@ class CyberbossApp {
     await this.channelAdapter.sendText({
       userId: normalized.senderId,
       text,
+      contextToken: normalized.contextToken,
+    });
+  }
+
+  async handleModelCommand(normalized, command) {
+    const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
+      workspaceId: normalized.workspaceId,
+      accountId: normalized.accountId,
+      senderId: normalized.senderId,
+    });
+    const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
+    const query = normalizeCommandArgument(command.args);
+    const sessionStore = this.runtimeAdapter.getSessionStore();
+    const catalog = sessionStore.getAvailableModelCatalog();
+    const currentModel = sessionStore.getCodexParamsForWorkspace(bindingKey, workspaceRoot).model;
+
+    if (!query) {
+      const lines = [
+        `当前模型: ${currentModel || "(default)"}`,
+      ];
+      if (catalog?.models?.length) {
+        lines.push(`可用模型: ${catalog.models.map((item) => item.model).join("、")}`);
+      } else {
+        lines.push("可用模型: (未获取到模型列表)");
+      }
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: lines.join("\n"),
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const matched = findModelByQuery(catalog?.models || [], query);
+    if (!matched) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: `未找到模型：${query}`,
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    sessionStore.setCodexParamsForWorkspace(bindingKey, workspaceRoot, {
+      model: matched.model,
+    });
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: `已切换模型。\n\nworkspace: ${workspaceRoot}\nmodel: ${matched.model}`,
+      contextToken: normalized.contextToken,
+    });
+  }
+
+  async handleSendCommand(normalized, command) {
+    const requestedPath = normalizeCommandArgument(command.args);
+    if (!requestedPath) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: "用法：/send <相对路径>",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    if (path.isAbsolute(requestedPath)) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: "只支持发送当前项目内的相对路径文件。",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
+      workspaceId: normalized.workspaceId,
+      accountId: normalized.accountId,
+      senderId: normalized.senderId,
+    });
+    const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
+    const resolvedPath = path.resolve(workspaceRoot, requestedPath);
+    const relativePath = path.relative(workspaceRoot, resolvedPath);
+    if (!relativePath || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: "只支持发送当前项目内的文件。",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const stats = await fs.promises.stat(resolvedPath).catch(() => null);
+    if (!stats?.isFile()) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: `文件不存在：${requestedPath}`,
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    await this.channelAdapter.sendFile({
+      userId: normalized.senderId,
+      filePath: resolvedPath,
+      contextToken: normalized.contextToken,
+    });
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: `已发送文件：${requestedPath}`,
+      contextToken: normalized.contextToken,
+    });
+  }
+
+  async handleHelpCommand(normalized) {
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: buildWeixinHelpText(),
       contextToken: normalized.contextToken,
     });
   }

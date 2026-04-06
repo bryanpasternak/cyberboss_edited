@@ -84,6 +84,37 @@ class SessionStore {
     });
   }
 
+  getCodexParamsForWorkspace(bindingKey, workspaceRoot) {
+    const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
+    if (!normalizedWorkspaceRoot) {
+      return { model: "" };
+    }
+    const current = this.getBinding(bindingKey) || {};
+    const codexParamsByWorkspaceRoot = getCodexParamsMap(current);
+    const entry = codexParamsByWorkspaceRoot[normalizedWorkspaceRoot];
+    return {
+      model: normalizeValue(entry?.model),
+    };
+  }
+
+  setCodexParamsForWorkspace(bindingKey, workspaceRoot, { model = "" }) {
+    const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
+    if (!normalizedWorkspaceRoot) {
+      return this.getBinding(bindingKey);
+    }
+    const current = this.getBinding(bindingKey) || {};
+    const codexParamsByWorkspaceRoot = {
+      ...getCodexParamsMap(current),
+      [normalizedWorkspaceRoot]: {
+        model: normalizeValue(model),
+      },
+    };
+    return this.updateBinding(bindingKey, {
+      ...current,
+      codexParamsByWorkspaceRoot,
+    });
+  }
+
   clearThreadIdForWorkspace(bindingKey, workspaceRoot) {
     const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
@@ -215,6 +246,12 @@ function normalizeValue(value) {
 function getThreadMap(binding) {
   return binding?.threadIdByWorkspaceRoot && typeof binding.threadIdByWorkspaceRoot === "object"
     ? binding.threadIdByWorkspaceRoot
+    : {};
+}
+
+function getCodexParamsMap(binding) {
+  return binding?.codexParamsByWorkspaceRoot && typeof binding.codexParamsByWorkspaceRoot === "object"
+    ? binding.codexParamsByWorkspaceRoot
     : {};
 }
 

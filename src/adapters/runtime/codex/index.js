@@ -64,6 +64,9 @@ function createCodexRuntimeAdapter(config) {
       const models = Array.isArray(modelResponse?.result?.data)
         ? modelResponse.result.data
         : [];
+      if (models.length) {
+        sessionStore.setAvailableModelCatalog(models);
+      }
       readyState = {
         endpoint: config.codexEndpoint || "(spawn)",
         models,
@@ -102,7 +105,7 @@ function createCodexRuntimeAdapter(config) {
       await this.initialize();
       return runtimeClient.resumeThread({ threadId });
     },
-    async sendTextTurn({ bindingKey, workspaceRoot, text, metadata = {} }) {
+    async sendTextTurn({ bindingKey, workspaceRoot, text, metadata = {}, model = "" }) {
       const runtimeClient = ensureClient();
       await this.initialize();
 
@@ -130,6 +133,7 @@ function createCodexRuntimeAdapter(config) {
       await runtimeClient.sendUserMessage({
         threadId,
         text,
+        model,
         workspaceRoot,
       });
       const result = await completion;

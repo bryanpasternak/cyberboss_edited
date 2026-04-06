@@ -4,6 +4,7 @@ const { resolveSelectedAccount } = require("./account-store");
 const { loadPersistedContextTokens, persistContextToken } = require("./context-token-store");
 const { runLoginFlow } = require("./login");
 const { getConfig, getUpdates, sendMessage, sendTyping } = require("./api");
+const { sendWeixinMediaFile } = require("./media-send");
 const { normalizeWeixinIncomingMessage } = require("./message-utils");
 const { loadSyncBuffer, saveSyncBuffer } = require("./sync-buffer-store");
 
@@ -173,6 +174,21 @@ function createWeixinChannelAdapter(config) {
           typing_ticket: typingTicket,
           status,
         },
+      });
+    },
+    async sendFile({ userId, filePath, contextToken = "" }) {
+      const account = ensureAccount();
+      const resolvedToken = resolveContextToken(userId, contextToken);
+      if (!resolvedToken) {
+        throw new Error(`缺少 context_token，无法发送文件给用户 ${userId}`);
+      }
+      return sendWeixinMediaFile({
+        filePath,
+        to: userId,
+        contextToken: resolvedToken,
+        baseUrl: account.baseUrl,
+        token: account.token,
+        cdnBaseUrl: config.weixinCdnBaseUrl,
       });
     },
   };
