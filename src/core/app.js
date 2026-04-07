@@ -23,7 +23,8 @@ const SESSION_EXPIRED_ERRCODE = -14;
 const RETRY_DELAY_MS = 2_000;
 const BACKOFF_DELAY_MS = 30_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
-const FIRST_RUNTIME_EVENT_TIMEOUT_MS = 8_000;
+const FIRST_RUNTIME_EVENT_NOTICE_TIMEOUT_MS = 8_000;
+const FIRST_RUNTIME_EVENT_FAILURE_TIMEOUT_MS = 45_000;
 
 class CyberbossApp {
   constructor(config) {
@@ -315,7 +316,30 @@ class CyberbossApp {
     }
 
     this.clearRuntimeEventWatchdog(normalizedThreadId);
-    const timer = setTimeout(async () => {
+    const noticeTimer = setTimeout(async () => {
+      const watchdog = this.pendingRuntimeEventWatchdogs.get(normalizedThreadId);
+      if (!watchdog) {
+        return;
+      }
+      const currentThreadState = this.threadStateStore.getThreadState(normalizedThreadId);
+      if (currentThreadState?.status === "running" || currentThreadState?.turnId) {
+        return;
+      }
+      watchdog.noticeSent = true;
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        contextToken: normalized.contextToken,
+        preserveBlock: true,
+        text: [
+          "这条消息已经发到 bridge，但 Codex runtime 还没有返回首个事件。",
+          "如果你看到 terminal 正在 reconnecting，这一轮大概率还卡在共享线程启动阶段。",
+          "先不用一直空等；如果稍后连上，消息会继续往下跑。",
+          `workspace: ${workspaceRoot}`,
+          `thread: ${normalizedThreadId}`,
+        ].join("\n"),
+      }).catch(() => {});
+    }, FIRST_RUNTIME_EVENT_NOTICE_TIMEOUT_MS);
+    const failureTimer = setTimeout(async () => {
       this.pendingRuntimeEventWatchdogs.delete(normalizedThreadId);
       const currentThreadState = this.threadStateStore.getThreadState(normalizedThreadId);
       if (currentThreadState?.status === "running" || currentThreadState?.turnId) {
@@ -331,8 +355,8 @@ class CyberbossApp {
         contextToken: normalized.contextToken,
         preserveBlock: true,
         text: [
-          "这条消息已经发到 bridge，但 Codex runtime 没有返回首个事件。",
-          "这通常不是微信没连上，而是共享线程链路没有真正跑通。",
+          "这条消息已经发到 bridge，但 Codex runtime 直到现在都没有返回首个事件。",
+          "如果 terminal 里的那轮 reconnecting 已经跑完 5 次，这条共享线程基本可以判定没有真正启动成功。",
           `workspace: ${workspaceRoot}`,
           `thread: ${normalizedThreadId}`,
           "优先检查：共享 app-server 是否正常、当前终端是否接在同一个 thread、runtime 是否真的开始处理这条消息。",
@@ -343,8 +367,12 @@ class CyberbossApp {
           "4. 确认 terminal 里打开的是上面这条 thread，而不是另一条私有线程",
         ].join("\n"),
       }).catch(() => {});
-    }, FIRST_RUNTIME_EVENT_TIMEOUT_MS);
-    this.pendingRuntimeEventWatchdogs.set(normalizedThreadId, timer);
+    }, FIRST_RUNTIME_EVENT_FAILURE_TIMEOUT_MS);
+    this.pendingRuntimeEventWatchdogs.set(normalizedThreadId, {
+      noticeTimer,
+      failureTimer,
+      noticeSent: false,
+    });
   }
 
   clearRuntimeEventWatchdog(threadId) {
@@ -352,11 +380,12 @@ class CyberbossApp {
     if (!normalizedThreadId) {
       return;
     }
-    const timer = this.pendingRuntimeEventWatchdogs.get(normalizedThreadId);
-    if (!timer) {
+    const watchdog = this.pendingRuntimeEventWatchdogs.get(normalizedThreadId);
+    if (!watchdog) {
       return;
     }
-    clearTimeout(timer);
+    clearTimeout(watchdog.noticeTimer);
+    clearTimeout(watchdog.failureTimer);
     this.pendingRuntimeEventWatchdogs.delete(normalizedThreadId);
   }
 
