@@ -3,6 +3,7 @@ const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs");
 const { createWeixinChannelAdapter } = require("../adapters/channel/weixin");
+const { persistIncomingWeixinAttachments } = require("../adapters/channel/weixin/media-receive");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
@@ -264,7 +265,10 @@ class CyberbossApp {
     }
 
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
-    const codexInboundText = buildCodexInboundText(normalized);
+    const prepared = await this.prepareIncomingMessageForRuntime(normalized, workspaceRoot);
+    if (!prepared) {
+      return;
+    }
 
     await this.channelAdapter.sendTyping({
       userId: normalized.senderId,
@@ -276,12 +280,12 @@ class CyberbossApp {
       await this.runtimeAdapter.sendTextTurn({
         bindingKey,
         workspaceRoot,
-        text: codexInboundText,
+        text: prepared.text,
         model: this.runtimeAdapter.getSessionStore().getCodexParamsForWorkspace(bindingKey, workspaceRoot).model,
         metadata: {
-          workspaceId: normalized.workspaceId,
-          accountId: normalized.accountId,
-          senderId: normalized.senderId,
+          workspaceId: prepared.workspaceId,
+          accountId: prepared.accountId,
+          senderId: prepared.senderId,
         },
       });
     } catch (error) {
@@ -292,6 +296,56 @@ class CyberbossApp {
         contextToken: normalized.contextToken,
       }).catch(() => {});
     }
+  }
+
+  async prepareIncomingMessageForRuntime(normalized, workspaceRoot) {
+    const attachments = Array.isArray(normalized.attachments) ? normalized.attachments : [];
+    if (!attachments.length) {
+      return {
+        ...normalized,
+        originalText: normalized.text,
+        text: buildCodexInboundText(normalized, { saved: [], failed: [] }, this.config),
+        attachments: [],
+        attachmentFailures: [],
+      };
+    }
+
+    const persisted = await persistIncomingWeixinAttachments({
+      attachments,
+      stateDir: this.config.stateDir,
+      cdnBaseUrl: this.config.weixinCdnBaseUrl,
+      messageId: normalized.messageId,
+      receivedAt: normalized.receivedAt,
+    });
+
+    if (!persisted.saved.length && persisted.failed.length && !String(normalized.text || "").trim()) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: `图片/附件接收失败：${persisted.failed.map((item) => item.reason).join("; ")}`,
+        contextToken: normalized.contextToken,
+        preserveBlock: true,
+      }).catch(() => {});
+      return null;
+    }
+
+    const codexInboundText = buildCodexInboundText(normalized, persisted, this.config);
+    if (!codexInboundText) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: `图片/附件接收失败：${persisted.failed.map((item) => item.reason).join("; ")}`,
+        contextToken: normalized.contextToken,
+        preserveBlock: true,
+      }).catch(() => {});
+      return null;
+    }
+
+    return {
+      ...normalized,
+      originalText: normalized.text,
+      text: codexInboundText,
+      attachments: persisted.saved,
+      attachmentFailures: persisted.failed,
+    };
   }
 
   async flushPendingSystemMessages() {
@@ -1170,8 +1224,11 @@ function buildReminderSystemTrigger(reminder, config = {}) {
   ].join("\n");
 }
 
-function buildCodexInboundText(normalized) {
+function buildCodexInboundText(normalized, persisted = {}, config = {}) {
   const text = String(normalized?.text || "").trim();
+  const saved = Array.isArray(persisted?.saved) ? persisted.saved : [];
+  const failed = Array.isArray(persisted?.failed) ? persisted.failed : [];
+  const userName = String(config?.userName || "").trim() || "用户";
   const localTime = formatWechatLocalTime(normalized?.receivedAt);
   const lines = [];
   if (localTime) {
@@ -1183,6 +1240,31 @@ function buildCodexInboundText(normalized) {
     }
     lines.push(text);
   }
+
+  if (saved.length) {
+    if (lines.length) {
+      lines.push("");
+    }
+    lines.push(`${userName}发来了图片/附件。已保存到本地数据目录：`);
+    for (const item of saved) {
+      const suffix = item.sourceFileName ? `（原文件名：${item.sourceFileName}）` : "";
+      lines.push(`- [${item.kind}] ${item.absolutePath}${suffix}`);
+    }
+    lines.push(`必须先读取这些文件，确认内容后再回复${userName}。不要跳过读取步骤。`);
+    lines.push(`如果本地缺少对应读取工具，就直接告诉${userName}缺了什么工具、因此暂时无法读取，不要假装已经读过。`);
+  }
+
+  if (failed.length) {
+    if (lines.length) {
+      lines.push("");
+    }
+    lines.push("图片/附件接收异常：");
+    for (const item of failed) {
+      const label = item.sourceFileName || item.kind || "附件";
+      lines.push(`- ${label}: ${item.reason}`);
+    }
+  }
+
   return lines.join("\n").trim();
 }
 

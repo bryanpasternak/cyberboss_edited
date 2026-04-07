@@ -1,7 +1,10 @@
 const MESSAGE_TYPE_USER = 1;
 const MESSAGE_TYPE_BOT = 2;
 const MESSAGE_ITEM_TEXT = 1;
+const MESSAGE_ITEM_IMAGE = 2;
 const MESSAGE_ITEM_VOICE = 3;
+const MESSAGE_ITEM_FILE = 4;
+const MESSAGE_ITEM_VIDEO = 5;
 const DEDUP_TTL_MS = 5 * 60_000;
 
 function createInboundFilter() {
@@ -36,8 +39,10 @@ function createInboundFilter() {
         seen.set(dedupKey, Date.now());
       }
 
-      const text = bodyFromItemList(Array.isArray(message.item_list) ? message.item_list : []);
-      if (!text) {
+      const itemList = Array.isArray(message.item_list) ? message.item_list : [];
+      const text = bodyFromItemList(itemList);
+      const attachments = extractAttachmentItems(itemList);
+      if (!text && !attachments.length) {
         return null;
       }
 
@@ -50,6 +55,7 @@ function createInboundFilter() {
         messageId: normalizeMessageId(message),
         threadKey: normalizeText(message.session_id),
         text,
+        attachments,
         contextToken: normalizeText(message.context_token),
         receivedAt: createdAtMs > 0 ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
       };
@@ -97,7 +103,128 @@ function bodyFromItemList(items) {
 }
 
 function isMediaItemType(type) {
-  return type === 2 || type === 3 || type === 4 || type === 5;
+  return type === MESSAGE_ITEM_IMAGE || type === MESSAGE_ITEM_VOICE || type === MESSAGE_ITEM_FILE || type === MESSAGE_ITEM_VIDEO;
+}
+
+function extractAttachmentItems(itemList) {
+  if (!Array.isArray(itemList) || !itemList.length) {
+    return [];
+  }
+
+  const attachments = [];
+  for (let index = 0; index < itemList.length; index += 1) {
+    const normalized = normalizeAttachmentItem(itemList[index], index);
+    if (normalized) {
+      attachments.push(normalized);
+    }
+  }
+  return attachments;
+}
+
+function normalizeAttachmentItem(item, index) {
+  const itemType = Number(item?.type);
+  const payload = resolveAttachmentPayload(itemType, item);
+  if (!payload) {
+    return null;
+  }
+
+  const media = payload.media && typeof payload.media === "object"
+    ? payload.media
+    : {};
+
+  return {
+    kind: payload.kind,
+    itemType,
+    index,
+    fileName: normalizeText(
+      payload.body?.file_name
+      || payload.body?.filename
+      || item?.file_name
+      || item?.filename
+    ),
+    sizeBytes: parseOptionalInt(
+      payload.body?.len
+      || payload.body?.file_size
+      || payload.body?.size
+      || payload.body?.video_size
+      || item?.len
+    ),
+    directUrls: collectStringValues([
+      payload.body?.url,
+      payload.body?.download_url,
+      payload.body?.cdn_url,
+      media?.url,
+      media?.download_url,
+      media?.cdn_url,
+    ]),
+    mediaRef: {
+      encryptQueryParam: normalizeText(
+        media?.encrypt_query_param
+        || media?.encrypted_query_param
+        || payload.body?.encrypt_query_param
+        || payload.body?.encrypted_query_param
+        || item?.encrypt_query_param
+        || item?.encrypted_query_param
+      ),
+      aesKey: normalizeText(
+        media?.aes_key
+        || payload.body?.aes_key
+        || item?.aes_key
+      ),
+      aesKeyHex: normalizeText(
+        payload.body?.aeskey
+        || payload.body?.aes_key_hex
+        || item?.aeskey
+      ),
+      encryptType: Number(
+        media?.encrypt_type
+        ?? payload.body?.encrypt_type
+        ?? item?.encrypt_type
+        ?? 1
+      ),
+      fileKey: normalizeText(
+        media?.filekey
+        || payload.body?.filekey
+        || item?.filekey
+      ),
+    },
+    rawItem: item,
+  };
+}
+
+function resolveAttachmentPayload(itemType, item) {
+  if (itemType === MESSAGE_ITEM_IMAGE && item?.image_item && typeof item.image_item === "object") {
+    return { kind: "image", body: item.image_item, media: item.image_item.media };
+  }
+  if (itemType === MESSAGE_ITEM_FILE && item?.file_item && typeof item.file_item === "object") {
+    return { kind: "file", body: item.file_item, media: item.file_item.media };
+  }
+  if (itemType === MESSAGE_ITEM_VIDEO && item?.video_item && typeof item.video_item === "object") {
+    return { kind: "video", body: item.video_item, media: item.video_item.media };
+  }
+  return null;
+}
+
+function collectStringValues(values) {
+  const seen = new Set();
+  const result = [];
+  for (const value of values) {
+    const normalized = normalizeText(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    result.push(normalized);
+  }
+  return result;
+}
+
+function parseOptionalInt(value) {
+  if (value == null || value === "") {
+    return 0;
+  }
+  const parsed = Number.parseInt(String(value), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function normalizeMessageId(message) {
