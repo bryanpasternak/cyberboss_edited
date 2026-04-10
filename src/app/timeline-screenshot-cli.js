@@ -60,6 +60,9 @@ function parseTimelineScreenshotArgs(args) {
     if (token === "--send") {
       continue;
     }
+    if (token === "--demo") {
+      continue;
+    }
     if (token === "--user") {
       const value = String(args[index + 1] || "").trim();
       if (!value || value.startsWith("--")) {
