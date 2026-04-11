@@ -1,0 +1,148 @@
+{
+  "events": [
+    {
+      "id": "evt_1",
+      "startAt": "2026-04-10T08:47:00+08:00",
+      "endAt": "2026-04-10T08:55:00+08:00",
+      "title": "起床",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.routine",
+      "eventNodeId": "evt.wakeup",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_2",
+      "startAt": "2026-04-10T08:55:00+08:00",
+      "endAt": "2026-04-10T10:00:00+08:00",
+      "title": "早餐",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.eat",
+      "eventNodeId": "evt.breakfast",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_3",
+      "startAt": "2026-04-10T10:00:00+08:00",
+      "endAt": "2026-04-10T13:00:00+08:00",
+      "title": "调试项目",
+      "note": "",
+      "categoryId": "work",
+      "subcategoryId": "work.project",
+      "eventNodeId": "evt.work",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_4",
+      "startAt": "2026-04-10T13:30:00+08:00",
+      "endAt": "2026-04-10T14:30:00+08:00",
+      "title": "午餐（边吃边看视频）",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.eat",
+      "eventNodeId": "evt.lunch",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_5",
+      "startAt": "2026-04-10T14:30:00+08:00",
+      "endAt": "2026-04-10T15:48:00+08:00",
+      "title": "休息、睡觉",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.routine",
+      "eventNodeId": "evt.rest",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_6",
+      "startAt": "2026-04-10T15:48:00+08:00",
+      "endAt": "2026-04-10T16:00:00+08:00",
+      "title": "起床、穿衣服、喝水",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.routine",
+      "eventNodeId": "evt.wakeup",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_7",
+      "startAt": "2026-04-10T16:18:00+08:00",
+      "endAt": "2026-04-10T16:30:00+08:00",
+      "title": "论文被拒",
+      "note": "",
+      "categoryId": "work",
+      "subcategoryId": "work.study",
+      "eventNodeId": "evt.paper",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_8",
+      "startAt": "2026-04-10T16:30:00+08:00",
+      "endAt": "2026-04-10T16:40:00+08:00",
+      "title": "吃巧克力",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.eat",
+      "eventNodeId": "evt.snack",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_9",
+      "startAt": "2026-04-10T17:50:00+08:00",
+      "endAt": "2026-04-10T18:24:00+08:00",
+      "title": "准备跑步",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.sport",
+      "eventNodeId": "evt.sport",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_10",
+      "startAt": "2026-04-10T18:24:00+08:00",
+      "endAt": "2026-04-10T19:14:00+08:00",
+      "title": "跑步、引体向上没力气",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.sport",
+      "eventNodeId": "evt.run",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_11",
+      "startAt": "2026-04-10T19:14:00+08:00",
+      "endAt": "2026-04-10T20:00:00+08:00",
+      "title": "晚餐（涮牛肉）",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.eat",
+      "eventNodeId": "evt.dinner",
+      "tags": [],
+      "confidence": 0.5
+    },
+    {
+      "id": "evt_12",
+      "startAt": "2026-04-10T20:00:00+08:00",
+      "endAt": "2026-04-10T23:00:00+08:00",
+      "title": "调试项目（成功大半）",
+      "note": "",
+      "categoryId": "work",
+      "subcategoryId": "work.project",
+      "eventNodeId": "evt.work",
+      "tags": [],
+      "confidence": 0.5
+    }
+  ]
+}

@@ -4,6 +4,8 @@ const os = require("os");
 
 const IS_WINDOWS = os.platform() === "win32";
 
+console.log("🚀 我是新代码！已经加载成功！");
+
 function createTimelineIntegration(config) {
   const binPath = resolveTimelineBinPath();
 
@@ -43,10 +45,20 @@ function runTimelineCommand(binPath, args, extraEnv = {}, options = {}) {
       stdio: ["inherit", "pipe", "pipe"],
       env: {
         ...process.env,
-        ...extraEnv,
+        LANG: 'zh_CN.UTF-8',
+        LC_ALL: 'zh_CN.UTF-8',
+        NODE_OUTPUT_ENCODING: 'utf8',
+        NODE_ENV: 'development'
       },
-      shell: false,
+      
+      // Windows 上额外强制 UTF-8（虽然直接 node 已基本够用）
+      windowsHide: true,
+      encoding: 'utf8',
+      shell: false
     });
+
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
 
     let stdout = "";
     let stderr = "";
@@ -85,36 +97,43 @@ function runTimelineCommand(binPath, args, extraEnv = {}, options = {}) {
   });
 }
 
-function buildTimelineSpawnSpec(binPath, args = []) {
-  if (IS_WINDOWS) {
-    return {
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", buildWindowsNodeCommand(process.execPath, binPath, args)],
-    };
-  }
+// function buildTimelineSpawnSpec(binPath, args = []) {
+//   if (IS_WINDOWS) {
+//     return {
+//       command: "cmd.exe",
+//       args: ["/d", "/s", "/c", buildWindowsNodeCommand(process.execPath, binPath, args)],
+//     };
+//   }
 
+//   return {
+//     command: process.execPath,
+//     args: [binPath, ...args],
+//   };
+// }
+
+function buildTimelineSpawnSpec(binPath, args = []) {
   return {
-    command: process.execPath,
+    command: process.execPath,           // 始终直接 node
     args: [binPath, ...args],
   };
 }
 
-function buildWindowsNodeCommand(nodePath, binPath, args = []) {
-  const commandParts = [nodePath, binPath, ...args].map(quoteWindowsCmdArg);
-  return commandParts.join(" ");
-}
+// function buildWindowsNodeCommand(nodePath, binPath, args = []) {
+//   const commandParts = [nodePath, binPath, ...args].map(quoteWindowsCmdArg);
+//   return commandParts.join(" ");
+// }
 
-function quoteWindowsCmdArg(value) {
-  const text = String(value ?? "");
-  if (!text.length) {
-    return "\"\"";
-  }
-  if (!/[\s"]/u.test(text)) {
-    return text;
-  }
-  const escaped = text.replace(/(\\*)"/g, "$1$1\\\"");
-  return `"${escaped.replace(/(\\+)$/g, "$1$1")}"`;
-}
+// function quoteWindowsCmdArg(value) {
+//   const text = String(value ?? "");
+//   if (!text.length) {
+//     return "\"\"";
+//   }
+//   if (!/[\s"]/u.test(text)) {
+//     return text;
+//   }
+//   const escaped = text.replace(/(\\*)"/g, "$1$1\\\"");
+//   return `"${escaped.replace(/(\\+)$/g, "$1$1")}"`;
+// }
 
 function normalizeArgs(args) {
   return Array.isArray(args)

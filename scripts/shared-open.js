@@ -8,16 +8,26 @@ const {
 async function main() {
   const workspaceRoot = process.env.CYBERBOSS_WORKSPACE_ROOT || process.cwd();
   await ensureSharedAppServer();
+
   const { threadId, workspaceRoot: resolvedWorkspaceRoot } = resolveBoundThread(workspaceRoot);
-  const child = spawn(process.env.CYBERBOSS_CODEX_COMMAND || "codex", [
+
+  // ==================== 修改部分开始 ====================
+  // 这里强制指定你想要的模型（推荐用 google/gemini-2.0-flash-lite-001 或 qwen/qwen2.5-32b:free）
+  const desiredModel = "deepseek/deepseek-v3.2";   // ←←← 你可以在这里改模型
+
+  const args = [
     "resume",
     threadId,
     "--remote",
     listenUrl,
     "-C",
     resolvedWorkspaceRoot,
+    "--model", desiredModel,        // 关键：强制传入模型
     ...process.argv.slice(2),
-  ], {
+  ];
+  // ==================== 修改部分结束 ====================
+
+  const child = spawn(process.env.CYBERBOSS_CODEX_COMMAND || "codex", args, {
     stdio: "inherit",
     shell: process.platform === "win32",
   });

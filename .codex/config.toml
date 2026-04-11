@@ -1,0 +1,20 @@
+model_provider = "openrouter"
+model = "qwen/qwen3-embedding-8b"  
+
+[model_providers.openrouter]
+name = "openrouter"
+base_url = "https://openrouter.ai/api/v1"
+env_key = "OPENROUTER_API_KEY"
+
+
+[projects.'C:\\Users\\19670\\cyberboss']
+trust_level = "trusted"
+
+[projects.'C:\\Users\\19670']
+trust_level = "trusted"
+
+[projects.'C:\Users\19670']
+trust_level = "trusted"
+
+[windows]
+sandbox = "unelevated"

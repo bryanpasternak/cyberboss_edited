@@ -1,0 +1,16 @@
+{
+  "events": [
+    {
+      "id": "evt_1",
+      "startAt": "2026-04-11T11:30:00+08:00",
+      "endAt": "2026-04-11T12:30:00+08:00",
+      "title": "清理/家务",
+      "note": "",
+      "categoryId": "life",
+      "subcategoryId": "life.chores",
+      "eventNodeId": "evt.cleanup",
+      "tags": [],
+      "confidence": 0.5
+    }
+  ]
+}
