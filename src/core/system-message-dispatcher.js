@@ -30,7 +30,7 @@ class SystemMessageDispatcher {
       threadKey: `system:${message.senderId}`,
       senderId: message.senderId,
       messageId: message.id,
-      text: buildSystemInboundText(message?.text, this.config),
+      text: buildSystemInboundText(message?.text),
       attachments: [],
       command: "message",
       contextToken,
@@ -40,13 +40,22 @@ class SystemMessageDispatcher {
   }
 }
 
-function buildSystemInboundText(text, config = {}) {
+function buildSystemInboundText(text) {
   const body = normalizeText(text);
-  const userName = normalizeText(config?.userName) || "用户";
-  if (!body) {
-    return `System trigger.\nThis message is not visible to ${userName}.`;
+  const sections = [
+    "SYSTEM ACTION MODE",
+    "System trigger, not user chat.",
+    "Do any timeline/diary/reminder work in this turn.",
+    "If you act, end with send_message that briefly and naturally reflects what you did or what changed; use silent only if you do nothing.",
+    "Return exactly one JSON object after any tool calls:",
+    "{\"action\":\"silent\"}",
+    "{\"action\":\"send_message\",\"message\":\"<one short natural WeChat message>\"}",
+    "No reasoning. No text outside the JSON.",
+  ];
+  if (body) {
+    sections.push("", "Trigger:", body);
   }
-  return `System trigger.\nThis message is not visible to ${userName}.\n${body}`;
+  return sections.join("\n").trim();
 }
 
 function normalizeIsoTime(value) {

@@ -5,7 +5,7 @@ class StreamDelivery {
     this.channelAdapter = channelAdapter;
     this.sessionStore = sessionStore;
     this.replyTargetByBindingKey = new Map();
-    this.pendingReplyTargetsByThreadId = new Map();
+    this.replyTargetByThreadId = new Map();
     this.stateByRunKey = new Map();
   }
 
@@ -25,13 +25,13 @@ class StreamDelivery {
     if (!normalizedThreadId || !target?.userId || !target?.contextToken) {
       return;
     }
-    const queue = this.pendingReplyTargetsByThreadId.get(normalizedThreadId) || [];
-    queue.push({
+    const normalizedTarget = {
       userId: String(target.userId).trim(),
       contextToken: String(target.contextToken).trim(),
       provider: normalizeText(target.provider),
-    });
-    this.pendingReplyTargetsByThreadId.set(normalizedThreadId, queue);
+    };
+    this.replyTargetByThreadId.set(normalizedThreadId, normalizedTarget);
+    this.bindReplyTargetToActiveThreadRuns(normalizedThreadId, normalizedTarget);
   }
 
   async handleRuntimeEvent(event) {
@@ -82,37 +82,6 @@ class StreamDelivery {
     }
   }
 
-  async finishTurn({ threadId, finalText }) {
-    const normalizedThreadId = normalizeText(threadId);
-    const normalizedFinalText = normalizeLineEndings(finalText);
-    if (!normalizedThreadId || !normalizedFinalText) {
-      return;
-    }
-
-    const state = this.ensureRunState(normalizedThreadId, "");
-    this.attachReplyTarget(state);
-    if (!state.itemOrder.length) {
-      this.upsertItem(state, {
-        itemId: "final",
-        text: normalizedFinalText,
-        completed: true,
-      });
-    } else {
-      const itemId = state.itemOrder[state.itemOrder.length - 1] || "final";
-      this.setItemText(state, itemId, normalizedFinalText, true);
-      for (const candidateId of state.itemOrder) {
-        const item = state.items.get(candidateId);
-        if (item) {
-          item.currentText = item.completedText || item.currentText;
-          item.completed = true;
-        }
-      }
-    }
-
-    await this.flush(state, { force: true });
-    this.disposeRunState(state.runKey);
-  }
-
   ensureRunState(threadId, turnId = "") {
     const runKey = buildRunKey(threadId, turnId);
     const existing = this.stateByRunKey.get(runKey);
@@ -139,14 +108,10 @@ class StreamDelivery {
 
   attachReplyTarget(state) {
     if (!state.replyTarget) {
-      const queue = this.pendingReplyTargetsByThreadId.get(state.threadId) || [];
-      if (queue.length) {
-        state.replyTarget = queue.shift();
-        if (queue.length) {
-          this.pendingReplyTargetsByThreadId.set(state.threadId, queue);
-        } else {
-          this.pendingReplyTargetsByThreadId.delete(state.threadId);
-        }
+      const threadTarget = this.replyTargetByThreadId.get(state.threadId) || null;
+      if (threadTarget) {
+        state.replyTarget = threadTarget;
+        this.replyTargetByThreadId.delete(state.threadId);
       }
     }
     const linked = this.sessionStore.findBindingForThreadId(state.threadId);
@@ -225,14 +190,19 @@ class StreamDelivery {
       return;
     }
 
-    const plainText = markdownToPlainText(buildReplyText(state, { completedOnly: !force }));
-    const sanitized = sanitizeReplyText(state.replyTarget, plainText);
-    if (sanitized.suppress) {
-      state.sentText = sanitized.text;
-      console.log(`[cyberboss] suppressed system reply thread=${state.threadId} preview=${JSON.stringify(plainText.slice(0, 80))}`);
+    const replyText = buildReplyText(state, { completedOnly: !force });
+    const structuredAction = maybeResolveStructuredAction(replyText);
+    if (structuredAction) {
+      await this.flushStructuredAction(state, { structuredAction, replyText, strict: state.replyTarget.provider === "system" });
       return;
     }
-    const safeText = sanitized.text;
+    if (state.replyTarget.provider === "system") {
+      await this.flushSystemReply(state, { force, replyText });
+      return;
+    }
+
+    const plainText = markdownToPlainText(replyText);
+    const safeText = sanitizeReplyText(plainText);
     if (!safeText || safeText === state.sentText) {
       return;
     }
@@ -266,12 +236,127 @@ class StreamDelivery {
     await state.sendChain;
   }
 
+  async flushSystemReply(state, { force, replyText }) {
+    if (!force) {
+      return;
+    }
+
+    const resolved = resolveSystemReplyAction(replyText);
+    await this.flushStructuredAction(state, { structuredAction: resolved, replyText, strict: true });
+  }
+
+  async flushStructuredAction(state, { structuredAction, replyText, strict }) {
+    const resolved = structuredAction;
+    if (resolved.kind === "silent") {
+      state.sentText = "";
+      console.log(
+        `[cyberboss] suppressed system reply thread=${state.threadId} action=silent preview=${JSON.stringify(replyText.slice(0, 120))}`
+      );
+      return;
+    }
+
+    if (resolved.kind !== "send_message") {
+      if (strict || resolved.kind === "invalid") {
+        console.error(
+          `[cyberboss] invalid system reply thread=${state.threadId} reason=${resolved.reason} preview=${JSON.stringify(replyText.slice(0, 160))}`
+        );
+      }
+      return;
+    }
+
+    const safeText = resolved.message;
+    if (!safeText || safeText === state.sentText) {
+      return;
+    }
+
+    state.sendChain = state.sendChain.then(async () => {
+      await this.sendSystemReply(state, safeText);
+      state.sentText = safeText;
+    }).catch((error) => {
+      console.error(`[cyberboss] failed to deliver system reply thread=${state.threadId}: ${error.message}`);
+    });
+
+    await state.sendChain;
+  }
+
+  async sendSystemReply(state, text) {
+    const initialTarget = state.replyTarget;
+    try {
+      await this.channelAdapter.sendText({
+        userId: initialTarget.userId,
+        text,
+        contextToken: initialTarget.contextToken,
+      });
+      return;
+    } catch (error) {
+      const retryTarget = this.resolveRetriableSystemReplyTarget(initialTarget, error);
+      if (!retryTarget) {
+        throw error;
+      }
+      console.warn(
+        `[cyberboss] system reply retrying with refreshed context token thread=${state.threadId} user=${retryTarget.userId}`
+      );
+      await this.channelAdapter.sendText({
+        userId: retryTarget.userId,
+        text,
+        contextToken: retryTarget.contextToken,
+      });
+      state.replyTarget = retryTarget;
+      if (state.bindingKey) {
+        this.replyTargetByBindingKey.set(state.bindingKey, {
+          userId: retryTarget.userId,
+          contextToken: retryTarget.contextToken,
+          provider: retryTarget.provider,
+        });
+      }
+    }
+  }
+
+  resolveRetriableSystemReplyTarget(currentTarget, error) {
+    if (!isSystemReplyContextFailure(error)) {
+      return null;
+    }
+    if (!currentTarget?.userId) {
+      return null;
+    }
+    if (typeof this.channelAdapter.getKnownContextTokens !== "function") {
+      return null;
+    }
+    const tokens = this.channelAdapter.getKnownContextTokens();
+    const refreshedContextToken = normalizeText(tokens?.[currentTarget.userId]);
+    if (!refreshedContextToken || refreshedContextToken === currentTarget.contextToken) {
+      return null;
+    }
+    return {
+      userId: currentTarget.userId,
+      contextToken: refreshedContextToken,
+      provider: currentTarget.provider,
+    };
+  }
+
   disposeRunState(runKey) {
     const normalizedRunKey = normalizeText(runKey);
     if (!normalizedRunKey) {
       return;
     }
+    const state = this.stateByRunKey.get(normalizedRunKey) || null;
+    if (state?.threadId) {
+      this.replyTargetByThreadId.delete(state.threadId);
+    }
     this.stateByRunKey.delete(normalizedRunKey);
+  }
+
+  bindReplyTargetToActiveThreadRuns(threadId, target) {
+    for (const state of this.stateByRunKey.values()) {
+      if (state.threadId !== threadId) {
+        continue;
+      }
+      state.replyTarget = {
+        userId: target.userId,
+        contextToken: target.contextToken,
+        provider: target.provider,
+      };
+    }
   }
 }
 
@@ -307,12 +392,12 @@ function markdownToPlainText(text) {
   result = result.replace(/```([^\n]*)\n?([\s\S]*?)```/g, (_, language, code) => {
     const label = String(language || "").trim();
     const body = indentBlock(String(code || ""));
-    return label ? `\n${label}:\n${body}\n` : `\n代码:\n${body}\n`;
+    return label ? `\n${label}:\n${body}\n` : `\nCode:\n${body}\n`;
   });
   result = result.replace(/```([^\n]*)\n?([\s\S]*)$/g, (_, language, code) => {
     const label = String(language || "").trim();
     const body = indentBlock(String(code || ""));
-    return label ? `\n${label}:\n${body}\n` : `\n代码:\n${body}\n`;
+    return label ? `\n${label}:\n${body}\n` : `\nCode:\n${body}\n`;
   });
   result = result.replace(/!\[[^\]]*]\([^)]*\)/g, "");
   result = result.replace(/\[([^\]]+)\]\([^)]*\)/g, "$1");
@@ -377,79 +462,91 @@ function trimOuterBlankLines(text) {
     .replace(/\n+\s*$/g, "");
 }
 
-function shouldSuppressSystemReply(replyTarget, plainReplyText) {
-  if (replyTarget?.provider !== "system") {
-    return false;
-  }
-  const normalized = normalizeLineEndings(String(plainReplyText || ""));
-  const compact = normalized.trim();
-  if (!compact) {
-    return false;
-  }
-  const sentinelNormalized = normalizeSilentSentinelText(compact);
-  if (compact === "CB_SILENT" || compact === "__SILENT__" || compact === "SILENT") {
-    return true;
-  }
-  if (containsStructuredSilentSignal(normalized)) {
-    return true;
-  }
-  if (compact.toUpperCase().includes("CB_SILENT") || compact.toUpperCase().includes("__SILENT__")) {
-    return true;
-  }
-  if (sentinelNormalized.includes("CB_SILENT") || sentinelNormalized.includes("__SILENT__") || sentinelNormalized.includes("SILENT")) {
-    return true;
-  }
-  return normalized
-    .split("\n")
-    .map((line) => normalizeSilentSentinelText(line.trim()))
-    .some((line) => line === "CB_SILENT" || line === "__SILENT__" || line === "SILENT");
-}
-
-function sanitizeReplyText(replyTarget, plainReplyText) {
+function sanitizeReplyText(plainReplyText) {
   const normalized = normalizeLineEndings(String(plainReplyText || ""));
   if (!normalized) {
-    return { suppress: false, text: "" };
+    return "";
   }
   const protocolSanitized = sanitizeProtocolLeakText(normalized);
-  const safeText = protocolSanitized.text || "";
-  if (shouldSuppressSystemReply(replyTarget, safeText)) {
-    return { suppress: true, text: "" };
+  return trimOuterBlankLines(protocolSanitized.text || "");
+}
+
+function resolveSystemReplyAction(replyText) {
+  const normalized = normalizeLineEndings(String(replyText || "")).trim();
+  if (!normalized) {
+    return { kind: "invalid", reason: "final reply is empty" };
   }
-  const cleaned = stripSilentSentinelArtifacts(safeText);
-  return {
-    suppress: false,
-    text: trimOuterBlankLines(cleaned),
-  };
+
+  const parsed = tryParseJson(normalized);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    return { kind: "invalid", reason: "final reply is not a JSON object" };
+  }
+
+  const action = normalizeSystemActionName(parsed.action || parsed.cyberboss_action);
+  if (action === "silent") {
+    return { kind: "silent" };
+  }
+  if (action !== "send_message") {
+    return { kind: "invalid", reason: "unsupported action" };
+  }
+
+  const message = sanitizeProtocolLeakText(normalizeLineEndings(String(parsed.message || parsed.text || ""))).text.trim();
+  if (!message) {
+    return { kind: "invalid", reason: "send_message requires a non-empty message" };
+  }
+
+  return { kind: "send_message", message };
 }
 
-function normalizeSilentSentinelText(value) {
+function maybeResolveStructuredAction(replyText) {
+  const normalized = normalizeLineEndings(String(replyText || "")).trim();
+  if (!normalized) {
+    return null;
+  }
+  if (!normalized.startsWith("{") || !normalized.endsWith("}")) {
+    return null;
+  }
+  const parsed = tryParseJson(normalized);
+  if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
+    return null;
+  }
+  if (!("action" in parsed) && !("cyberboss_action" in parsed)) {
+    return null;
+  }
+  return resolveSystemReplyAction(normalized);
+}
+
+function normalizeSystemActionName(value) {
   return String(value || "")
-    .normalize("NFKC")
-    .toUpperCase()
-    .replace(/[^A-Z_]/g, "");
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, "_");
 }
 
-function stripSilentSentinelArtifacts(value) {
-  return normalizeLineEndings(String(value || ""))
-    .replace(/\{\s*"cyberboss_action"\s*:\s*"silent"\s*\}/gi, "")
-    .split("\n")
-    .map((line) => {
-      const parts = line.split(/\s+/);
-      const kept = parts.filter((part) => !isSilentSentinelToken(part));
-      return kept.join(" ").trim();
-    })
-    .filter((line, index, lines) => line || (index > 0 && index < lines.length - 1))
-    .join("\n")
-    .replace(/\n{3,}/g, "\n\n");
+function tryParseJson(value) {
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
 }
 
-function isSilentSentinelToken(value) {
-  const normalized = normalizeSilentSentinelText(value);
-  return normalized === "CB_SILENT" || normalized === "__SILENT__" || normalized === "SILENT";
+function isSystemReplyContextFailure(error) {
+  const message = String(error?.message || "");
+  const ret = normalizeNumericErrorCode(error?.ret);
+  const errcode = normalizeNumericErrorCode(error?.errcode);
+  return ret === -2
+    || errcode === -2
+    || message.includes("sendMessage ret=-2")
+    || message.includes("errcode=-2");
 }
 
-function containsStructuredSilentSignal(value) {
-  return /\{\s*"cyberboss_action"\s*:\s*"silent"\s*\}/i.test(String(value || ""));
+function normalizeNumericErrorCode(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
 }
 
 module.exports = { StreamDelivery };
