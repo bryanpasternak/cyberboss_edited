@@ -863,7 +863,7 @@ class CyberbossApp {
     if (!parsedRange) {
       await this.channelAdapter.sendText({
         userId: normalized.senderId,
-        text: "Usage: /checkin 3-60",
+        text: "Usage: /checkin <min>-<max>",
         contextToken: normalized.contextToken,
       });
       return;

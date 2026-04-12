@@ -18,7 +18,7 @@ function createStore() {
 }
 
 test("parseCheckinRangeMinutes accepts min-max minute ranges", () => {
-  assert.deepEqual(parseCheckinRangeMinutes("3-60"), { minMinutes: 3, maxMinutes: 60 });
+  assert.deepEqual(parseCheckinRangeMinutes("7-21"), { minMinutes: 7, maxMinutes: 21 });
   assert.deepEqual(parseCheckinRangeMinutes("5 - 10"), { minMinutes: 5, maxMinutes: 10 });
   assert.equal(parseCheckinRangeMinutes("10-3"), null);
   assert.equal(parseCheckinRangeMinutes("abc"), null);
