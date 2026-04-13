@@ -5,8 +5,8 @@ const { SessionStore } = require("../adapters/runtime/codex/session-store");
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("../core/default-targets");
 const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
 
-const DEFAULT_MIN_INTERVAL_MS = 3 * 60_000;
-const DEFAULT_MAX_INTERVAL_MS = 60 * 60_000;
+const DEFAULT_MIN_INTERVAL_MS = 5 * 60_000;
+const DEFAULT_MAX_INTERVAL_MS = 48 * 60_000;
 const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "Decide whether to reach out to %USER% now. You may stay silent, send one short WeChat message, update diary/timeline, or take another useful action. If no user-visible message should be sent, output exactly SILENT. If you do send a message, output only the message text.";
 
 async function runSystemCheckinPoller(config) {
