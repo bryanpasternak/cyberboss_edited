@@ -1,59 +1,109 @@
-const TEXT_ITEM_TYPE = 1;
-const IMAGE_ITEM_TYPE = 2;
-const VOICE_ITEM_TYPE = 3;
-const FILE_ITEM_TYPE = 4;
-const VIDEO_ITEM_TYPE = 5;
-const BOT_MESSAGE_TYPE = 2;
+const MESSAGE_TYPE_USER = 1;
+const MESSAGE_TYPE_BOT = 2;
+const MESSAGE_ITEM_TEXT = 1;
+const MESSAGE_ITEM_IMAGE = 2;
+const MESSAGE_ITEM_VOICE = 3;
+const MESSAGE_ITEM_FILE = 4;
+const MESSAGE_ITEM_VIDEO = 5;
+const DEDUP_TTL_MS = 5 * 60_000;
 
-function normalizeWeixinIncomingMessage(message, config, accountId) {
-  if (!message || typeof message !== "object") {
-    return null;
-  }
-  if (Number(message.message_type) === BOT_MESSAGE_TYPE) {
-    return null;
-  }
-
-  const senderId = normalizeText(message.from_user_id);
-  if (!senderId) {
-    return null;
-  }
-
-  const text = extractTextBody(message.item_list);
-  const attachments = extractAttachmentItems(message.item_list);
-  if (!text && !attachments.length) {
-    return null;
-  }
+function createInboundFilter() {
+  const seen = new Map();
 
   return {
-    provider: "weixin",
-    accountId,
-    workspaceId: config.workspaceId,
-    senderId,
-    chatId: senderId,
-    messageId: normalizeText(message.message_id),
-    threadKey: normalizeText(message.session_id),
-    text,
-    attachments,
-    contextToken: normalizeText(message.context_token),
-    receivedAt: resolveReceivedAt(message),
+    normalize(message, config, accountId) {
+      if (!message || typeof message !== "object") {
+        return null;
+      }
+      const messageType = Number(message.message_type);
+      if (messageType === MESSAGE_TYPE_BOT) {
+        return null;
+      }
+      if (messageType !== 0 && messageType !== MESSAGE_TYPE_USER) {
+        return null;
+      }
+
+      const senderId = normalizeText(message.from_user_id);
+      if (!senderId) {
+        return null;
+      }
+
+      const createdAtMs = normalizeMessageTimestampMs(message);
+
+      const dedupKey = buildDedupKey(message, senderId, createdAtMs);
+      pruneSeen(seen);
+      if (dedupKey && seen.has(dedupKey)) {
+        return null;
+      }
+      if (dedupKey) {
+        seen.set(dedupKey, Date.now());
+      }
+
+      const itemList = Array.isArray(message.item_list) ? message.item_list : [];
+      const text = bodyFromItemList(itemList);
+      const attachments = extractAttachmentItems(itemList);
+      if (!text && !attachments.length) {
+        return null;
+      }
+
+      return {
+        provider: "weixin",
+        accountId,
+        workspaceId: config.workspaceId,
+        senderId,
+        chatId: senderId,
+        messageId: normalizeMessageId(message),
+        threadKey: normalizeText(message.session_id),
+        text,
+        attachments,
+        contextToken: normalizeText(message.context_token),
+        receivedAt: createdAtMs > 0 ? new Date(createdAtMs).toISOString() : new Date().toISOString(),
+      };
+    },
   };
 }
 
-function extractTextBody(itemList) {
-  if (!Array.isArray(itemList) || !itemList.length) {
+function bodyFromItemList(items) {
+  if (!Array.isArray(items) || !items.length) {
     return "";
   }
-
-  for (const item of itemList) {
-    if (Number(item?.type) === TEXT_ITEM_TYPE && typeof item?.text_item?.text === "string") {
-      return item.text_item.text.trim();
+  for (const item of items) {
+    const itemType = Number(item?.type);
+    if (itemType === MESSAGE_ITEM_TEXT) {
+      const text = normalizeText(item?.text_item?.text);
+      if (!text) {
+        continue;
+      }
+      const ref = item?.ref_msg;
+      if (!ref || !ref.message_item || isMediaItemType(Number(ref.message_item.type))) {
+        return text;
+      }
+      const parts = [];
+      const refTitle = normalizeText(ref.title);
+      if (refTitle) {
+        parts.push(refTitle);
+      }
+      const refBody = bodyFromItemList([ref.message_item]);
+      if (refBody) {
+        parts.push(refBody);
+      }
+      if (!parts.length) {
+        return text;
+      }
+      return `[Quoted: ${parts.join(" | ")}]\n${text}`;
     }
-    if (Number(item?.type) === VOICE_ITEM_TYPE && typeof item?.voice_item?.text === "string") {
-      return item.voice_item.text.trim();
+    if (itemType === MESSAGE_ITEM_VOICE) {
+      const voiceText = normalizeText(item?.voice_item?.text);
+      if (voiceText) {
+        return voiceText;
+      }
     }
   }
-
   return "";
+}
+
+function isMediaItemType(type) {
+  return type === MESSAGE_ITEM_IMAGE || type === MESSAGE_ITEM_VOICE || type === MESSAGE_ITEM_FILE || type === MESSAGE_ITEM_VIDEO;
 }
 
 function extractAttachmentItems(itemList) {
@@ -68,7 +118,6 @@ function extractAttachmentItems(itemList) {
       attachments.push(normalized);
     }
   }
-
   return attachments;
 }
 
@@ -144,13 +193,13 @@ function normalizeAttachmentItem(item, index) {
 }
 
 function resolveAttachmentPayload(itemType, item) {
-  if (itemType === IMAGE_ITEM_TYPE && item?.image_item && typeof item.image_item === "object") {
+  if (itemType === MESSAGE_ITEM_IMAGE && item?.image_item && typeof item.image_item === "object") {
     return { kind: "image", body: item.image_item, media: item.image_item.media };
   }
-  if (itemType === FILE_ITEM_TYPE && item?.file_item && typeof item.file_item === "object") {
+  if (itemType === MESSAGE_ITEM_FILE && item?.file_item && typeof item.file_item === "object") {
     return { kind: "file", body: item.file_item, media: item.file_item.media };
   }
-  if (itemType === VIDEO_ITEM_TYPE && item?.video_item && typeof item.video_item === "object") {
+  if (itemType === MESSAGE_ITEM_VIDEO && item?.video_item && typeof item.video_item === "object") {
     return { kind: "video", body: item.video_item, media: item.video_item.media };
   }
   return null;
@@ -178,22 +227,56 @@ function parseOptionalInt(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
+function normalizeMessageId(message) {
+  const raw = message?.message_id;
+  if (typeof raw === "number" && Number.isFinite(raw)) {
+    return String(raw);
+  }
+  if (typeof raw === "string") {
+    return raw.trim();
+  }
+  return "";
+}
+
+function normalizeMessageTimestampMs(message) {
+  const rawMs = Number(message?.create_time_ms);
+  if (Number.isFinite(rawMs) && rawMs > 0) {
+    return rawMs;
+  }
+  const rawSeconds = Number(message?.create_time);
+  if (Number.isFinite(rawSeconds) && rawSeconds > 0) {
+    return rawSeconds * 1000;
+  }
+  return 0;
+}
+
+function buildDedupKey(message, senderId, createdAtMs) {
+  const seq = normalizeNumeric(message?.seq);
+  const messageId = normalizeNumeric(message?.message_id);
+  const clientId = normalizeText(message?.client_id);
+  const parts = [senderId, messageId, seq, createdAtMs || 0, clientId];
+  return parts.join("|");
+}
+
+function normalizeNumeric(value) {
+  const num = Number(value);
+  return Number.isFinite(num) ? String(num) : "0";
+}
+
+function pruneSeen(seen) {
+  const now = Date.now();
+  for (const [key, timestamp] of seen.entries()) {
+    if (now - timestamp > DEDUP_TTL_MS) {
+      seen.delete(key);
+    }
+  }
+}
+
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
-function resolveReceivedAt(message) {
-  const rawMs = Number(message?.create_time_ms);
-  if (Number.isFinite(rawMs) && rawMs > 0) {
-    return new Date(rawMs).toISOString();
-  }
-  const rawSeconds = Number(message?.create_time);
-  if (Number.isFinite(rawSeconds) && rawSeconds > 0) {
-    return new Date(rawSeconds * 1000).toISOString();
-  }
-  return new Date().toISOString();
-}
-
 module.exports = {
-  normalizeWeixinIncomingMessage,
+  createInboundFilter,
+  bodyFromItemList,
 };

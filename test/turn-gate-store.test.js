@@ -233,7 +233,7 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
       },
       getSessionStore() {
         return {
-          getCodexParamsForWorkspace() {
+          getRuntimeParamsForWorkspace() {
             return { model: "gpt-5.4" };
           },
         };

@@ -1,6 +1,7 @@
 const fs = require("fs");
 const path = require("path");
 const { normalizeModelCatalog } = require("./model-catalog");
+const { normalizeCommandTokens } = require("../shared/approval-command");
 
 class SessionStore {
   constructor({ filePath }) {
@@ -92,7 +93,7 @@ class SessionStore {
     });
   }
 
-  getCodexParamsForWorkspace(bindingKey, workspaceRoot) {
+  getRuntimeParamsForWorkspace(bindingKey, workspaceRoot) {
     const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
       return { model: "" };
@@ -105,7 +106,7 @@ class SessionStore {
     };
   }
 
-  setCodexParamsForWorkspace(bindingKey, workspaceRoot, { model = "" }) {
+  setRuntimeParamsForWorkspace(bindingKey, workspaceRoot, { model = "" }) {
     const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
       return this.getBinding(bindingKey);
@@ -310,12 +311,6 @@ function getCodexParamsMap(binding) {
   return binding?.codexParamsByWorkspaceRoot && typeof binding.codexParamsByWorkspaceRoot === "object"
     ? binding.codexParamsByWorkspaceRoot
     : {};
-}
-
-function normalizeCommandTokens(tokens) {
-  return Array.isArray(tokens)
-    ? tokens.map((part) => normalizeValue(part)).filter(Boolean)
-    : [];
 }
 
 function isSameTokenList(left, right) {

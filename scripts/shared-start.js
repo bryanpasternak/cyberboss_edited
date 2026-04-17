@@ -12,7 +12,11 @@ const {
 async function main() {
   const appServer = await ensureSharedAppServer();
   const appServerPidLabel = appServer.pid ? ` pid=${appServer.pid}` : "";
-  console.log(`shared app-server ${appServer.status}${appServerPidLabel} listen=${listenUrl}`);
+  if (appServer.status === "skipped") {
+    console.log(`shared app-server skipped (runtime=${process.env.CYBERBOSS_RUNTIME || "codex"})`);
+  } else {
+    console.log(`shared app-server ${appServer.status}${appServerPidLabel} listen=${listenUrl}`);
+  }
 
   const existingBridgePid = ensureBridgeNotRunning();
   if (existingBridgePid) {
@@ -20,12 +24,15 @@ async function main() {
     return;
   }
 
+  const childEnv = { ...process.env };
+  const isCodex = !process.env.CYBERBOSS_RUNTIME || process.env.CYBERBOSS_RUNTIME === "codex";
+  if (isCodex) {
+    childEnv.CYBERBOSS_CODEX_ENDPOINT = listenUrl;
+  }
+
   const child = spawn(process.execPath, ["./bin/cyberboss.js", "start", "--checkin"], {
     cwd: rootDir,
-    env: {
-      ...process.env,
-      CYBERBOSS_CODEX_ENDPOINT: listenUrl,
-    },
+    env: childEnv,
     stdio: "inherit",
   });
 

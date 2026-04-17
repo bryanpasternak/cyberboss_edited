@@ -52,6 +52,12 @@ async function persistSingleAttachment({ attachment, stateDir, cdnBaseUrl, messa
 
   return {
     kind: attachment.kind || "file",
+    contentType: download.contentType,
+    isImage: isImageAttachment({
+      kind: attachment.kind,
+      contentType: download.contentType,
+      fileName,
+    }),
     sourceFileName: attachment.fileName || "",
     fileName: path.basename(absolutePath),
     absolutePath,
@@ -300,6 +306,23 @@ function extensionFromContentType(contentType) {
     "text/plain": ".txt",
   };
   return map[normalized] || "";
+}
+
+function isImageAttachment({ kind, contentType, fileName }) {
+  if (normalizeText(kind).toLowerCase() === "image") {
+    return true;
+  }
+  if (normalizeContentType(contentType).startsWith("image/")) {
+    return true;
+  }
+  const extension = path.extname(normalizeText(fileName)).toLowerCase();
+  return extension === ".png"
+    || extension === ".jpg"
+    || extension === ".jpeg"
+    || extension === ".gif"
+    || extension === ".webp"
+    || extension === ".bmp"
+    || extension === ".svg";
 }
 
 function detectExtensionFromBuffer(buffer) {

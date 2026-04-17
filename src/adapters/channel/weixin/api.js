@@ -17,6 +17,7 @@ const CHANNEL_VERSION = readChannelVersion();
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const DEFAULT_API_TIMEOUT_MS = 15_000;
 const DEFAULT_CONFIG_TIMEOUT_MS = 10_000;
+const MAX_RESPONSE_BODY_BYTES = 64 << 20;
 
 function buildBaseInfo() {
   return { channel_version: CHANNEL_VERSION };
@@ -31,101 +32,82 @@ function randomWechatUin() {
   return Buffer.from(String(uint32), "utf8").toString("base64");
 }
 
-function buildHeaders(opts) {
+function buildHeaders(token, body) {
   const headers = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    "Content-Length": String(Buffer.byteLength(opts.body, "utf8")),
+    "Content-Length": String(Buffer.byteLength(body, "utf8")),
     "X-WECHAT-UIN": randomWechatUin(),
   };
-  if (opts.token && String(opts.token).trim()) {
-    headers.Authorization = `Bearer ${String(opts.token).trim()}`;
+  if (typeof token === "string" && token.trim()) {
+    headers.Authorization = `Bearer ${token.trim()}`;
   }
   return headers;
 }
 
-async function apiFetch(params) {
-  const base = ensureTrailingSlash(params.baseUrl);
-  const url = new URL(params.endpoint, base);
-  const headers = buildHeaders({ token: params.token, body: params.body });
+function truncateForLog(value, max) {
+  const text = typeof value === "string" ? value : String(value || "");
+  return text.length <= max ? text : `${text.slice(0, max)}…`;
+}
+
+async function apiPost({ baseUrl, endpoint, token, body, timeoutMs = 0, label }) {
+  const url = new URL(endpoint, ensureTrailingSlash(baseUrl)).toString();
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), params.timeoutMs);
+  const timeout = timeoutMs > 0 ? timeoutMs : DEFAULT_API_TIMEOUT_MS;
+  const timer = setTimeout(() => controller.abort(), timeout + 5_000);
+
   try {
-    const response = await fetch(url.toString(), {
+    const response = await fetch(url, {
       method: "POST",
-      headers,
-      body: params.body,
+      headers: buildHeaders(token, body),
+      body,
       signal: controller.signal,
     });
-    clearTimeout(timer);
-    const rawText = await response.text();
+    const raw = await response.text();
+    if (Buffer.byteLength(raw, "utf8") > MAX_RESPONSE_BODY_BYTES) {
+      throw new Error(`${label} response body exceeds ${MAX_RESPONSE_BODY_BYTES} bytes`);
+    }
     if (!response.ok) {
-      throw new Error(`${params.label} ${response.status}: ${redactSensitiveText(rawText)}`);
+      throw new Error(`${label} http ${response.status}: ${redactSensitiveText(truncateForLog(raw, 512))}`);
     }
-    return rawText;
-  } catch (error) {
+    return raw;
+  } finally {
     clearTimeout(timer);
-    throw error;
   }
 }
 
-function parseApiJson(rawText, label) {
+function parseJson(raw, label) {
   try {
-    return JSON.parse(rawText);
+    return JSON.parse(raw);
   } catch {
-    throw new Error(`${label} returned invalid JSON: ${redactSensitiveText(rawText)}`);
+    throw new Error(`${label} returned invalid JSON: ${redactSensitiveText(truncateForLog(raw, 256))}`);
   }
 }
 
-function assertApiSuccess(response, label) {
-  const ret = response?.ret;
-  const errcode = response?.errcode;
-  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
-    const errmsg = typeof response?.errmsg === "string" ? response.errmsg.trim() : "";
-    throw new Error(`${label} ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
-  }
-  return response;
-}
-
-async function getUpdates(params) {
-  const timeout = params.timeoutMs || DEFAULT_LONG_POLL_TIMEOUT_MS;
-  try {
-    const rawText = await apiFetch({
-      baseUrl: params.baseUrl,
-      endpoint: "ilink/bot/getupdates",
-      body: JSON.stringify({
-        get_updates_buf: params.get_updates_buf || "",
-        base_info: buildBaseInfo(),
-      }),
-      token: params.token,
-      timeoutMs: timeout,
-      label: "getUpdates",
-    });
-    return parseApiJson(rawText, "getUpdates");
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      return { ret: 0, msgs: [], get_updates_buf: params.get_updates_buf || "" };
-    }
-    throw error;
-  }
-}
-
-async function sendMessage(params) {
-  const rawText = await apiFetch({
-    baseUrl: params.baseUrl,
+async function sendMessage({ baseUrl, token, body, timeoutMs }) {
+  const raw = await apiPost({
+    baseUrl,
     endpoint: "ilink/bot/sendmessage",
-    body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
-    token: params.token,
-    timeoutMs: params.timeoutMs || DEFAULT_API_TIMEOUT_MS,
+    token,
+    body: JSON.stringify({ ...body, base_info: buildBaseInfo() }),
+    timeoutMs: timeoutMs || DEFAULT_API_TIMEOUT_MS,
     label: "sendMessage",
   });
-  assertApiSuccess(parseApiJson(rawText, "sendMessage"), "sendMessage");
+  const parsed = parseJson(raw, "sendMessage");
+  const ret = parsed?.ret;
+  const errcode = parsed?.errcode;
+  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
+    const errmsg = typeof parsed?.errmsg === "string" ? parsed.errmsg.trim() : "";
+    throw new Error(`sendMessage ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
+  }
+  return parsed;
 }
 
 async function getUploadUrl(params) {
-  const rawText = await apiFetch({
+  const raw = await apiPost({
     baseUrl: params.baseUrl,
     endpoint: "ilink/bot/getuploadurl",
+    token: params.token,
     body: JSON.stringify({
       filekey: params.filekey,
       media_type: params.media_type,
@@ -140,39 +122,124 @@ async function getUploadUrl(params) {
       aeskey: params.aeskey,
       base_info: buildBaseInfo(),
     }),
-    token: params.token,
     timeoutMs: params.timeoutMs || DEFAULT_API_TIMEOUT_MS,
     label: "getUploadUrl",
   });
-  return assertApiSuccess(parseApiJson(rawText, "getUploadUrl"), "getUploadUrl");
+  const parsed = parseJson(raw, "getUploadUrl");
+  const ret = parsed?.ret;
+  const errcode = parsed?.errcode;
+  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
+    const errmsg = typeof parsed?.errmsg === "string" ? parsed.errmsg.trim() : "";
+    throw new Error(`getUploadUrl ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
+  }
+  return parsed;
 }
 
-async function getConfig(params) {
-  const rawText = await apiFetch({
-    baseUrl: params.baseUrl,
+async function getConfig({ baseUrl, token, ilinkUserId, contextToken, timeoutMs }) {
+  const raw = await apiPost({
+    baseUrl,
     endpoint: "ilink/bot/getconfig",
+    token,
     body: JSON.stringify({
-      ilink_user_id: params.ilinkUserId,
-      context_token: params.contextToken,
+      ilink_user_id: ilinkUserId,
+      context_token: contextToken,
       base_info: buildBaseInfo(),
     }),
-    token: params.token,
-    timeoutMs: params.timeoutMs || DEFAULT_CONFIG_TIMEOUT_MS,
+    timeoutMs: timeoutMs || DEFAULT_CONFIG_TIMEOUT_MS,
     label: "getConfig",
   });
-  return assertApiSuccess(parseApiJson(rawText, "getConfig"), "getConfig");
+  const parsed = parseJson(raw, "getConfig");
+  const ret = parsed?.ret;
+  const errcode = parsed?.errcode;
+  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
+    const errmsg = typeof parsed?.errmsg === "string" ? parsed.errmsg.trim() : "";
+    throw new Error(`getConfig ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
+  }
+  return parsed;
 }
 
-async function sendTyping(params) {
-  const rawText = await apiFetch({
-    baseUrl: params.baseUrl,
+async function sendTyping({ baseUrl, token, body, timeoutMs }) {
+  const raw = await apiPost({
+    baseUrl,
     endpoint: "ilink/bot/sendtyping",
-    body: JSON.stringify({ ...params.body, base_info: buildBaseInfo() }),
-    token: params.token,
-    timeoutMs: params.timeoutMs || DEFAULT_CONFIG_TIMEOUT_MS,
+    token,
+    body: JSON.stringify({ ...body, base_info: buildBaseInfo() }),
+    timeoutMs: timeoutMs || DEFAULT_CONFIG_TIMEOUT_MS,
     label: "sendTyping",
   });
-  assertApiSuccess(parseApiJson(rawText, "sendTyping"), "sendTyping");
+  const parsed = parseJson(raw, "sendTyping");
+  const ret = parsed?.ret;
+  const errcode = parsed?.errcode;
+  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
+    const errmsg = typeof parsed?.errmsg === "string" ? parsed.errmsg.trim() : "";
+    throw new Error(`sendTyping ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
+  }
+  return parsed;
+}
+
+async function getUpdates({ baseUrl, token, getUpdatesBuf = "", timeoutMs = DEFAULT_LONG_POLL_TIMEOUT_MS }) {
+  const payload = JSON.stringify({
+    get_updates_buf: getUpdatesBuf,
+    base_info: buildBaseInfo(),
+  });
+  try {
+    const raw = await apiPost({
+      baseUrl,
+      endpoint: "ilink/bot/getupdates",
+      token,
+      body: payload,
+      timeoutMs,
+      label: "getUpdates",
+    });
+    return parseJson(raw, "getUpdates");
+  } catch (error) {
+    if (error instanceof Error && (error.name === "AbortError" || String(error.message || "").includes("aborted"))) {
+      return { ret: 0, msgs: [], get_updates_buf: getUpdatesBuf };
+    }
+    throw error;
+  }
+}
+
+async function sendText({ baseUrl, token, toUserId, text, contextToken, clientId }) {
+  if (!String(contextToken || "").trim()) {
+    throw new Error("weixin sendText requires contextToken");
+  }
+  const itemList = [];
+  if (String(text || "").trim()) {
+    itemList.push({
+      type: 1,
+      text_item: { text: String(text) },
+    });
+  }
+  if (!itemList.length) {
+    throw new Error("weixin sendText requires non-empty text");
+  }
+  const raw = await apiPost({
+    baseUrl,
+    endpoint: "ilink/bot/sendmessage",
+    token,
+    body: JSON.stringify({
+      msg: {
+        from_user_id: "",
+        to_user_id: toUserId,
+        client_id: clientId || `cb-${crypto.randomUUID()}`,
+        message_type: 2,
+        message_state: 2,
+        item_list: itemList,
+        context_token: contextToken,
+      },
+      base_info: buildBaseInfo(),
+    }),
+    label: "sendMessage",
+  });
+  const parsed = parseJson(raw, "sendMessage");
+  const ret = parsed?.ret;
+  const errcode = parsed?.errcode;
+  if ((ret !== undefined && ret !== 0) || (errcode !== undefined && errcode !== 0)) {
+    const errmsg = typeof parsed?.errmsg === "string" ? parsed.errmsg.trim() : "";
+    throw new Error(`sendMessage ret=${ret ?? ""} errcode=${errcode ?? ""} errmsg=${redactSensitiveText(errmsg)}`);
+  }
+  return parsed;
 }
 
 module.exports = {
@@ -182,4 +249,5 @@ module.exports = {
   getUpdates,
   sendMessage,
   sendTyping,
+  sendText,
 };

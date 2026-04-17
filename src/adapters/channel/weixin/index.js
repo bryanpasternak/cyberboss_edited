@@ -3,11 +3,11 @@ const { listWeixinAccounts, resolveSelectedAccount } = require("./account-store"
 const { loadPersistedContextTokens, persistContextToken } = require("./context-token-store");
 const { runLoginFlow } = require("./login");
 const { getConfig, sendTyping } = require("./api");
-const { getUpdatesV2, sendTextV2 } = require("./api-v2");
-const { createLegacyWeixinChannelAdapter } = require("./legacy");
-const { createInboundFilter } = require("./message-utils-v2");
+const { getUpdates, sendText } = require("./api");
+const { createInboundFilter } = require("./message-utils");
 const { sendWeixinMediaFile } = require("./media-send");
 const { loadSyncBuffer, saveSyncBuffer } = require("./sync-buffer-store");
+const { loadWeixinConfig, saveWeixinConfig, DEFAULT_MIN_WEIXIN_CHUNK } = require("./config-store");
 
 const LONG_POLL_TIMEOUT_MS = 35_000;
 const MAX_WEIXIN_CHUNK = 3800;
@@ -15,14 +15,10 @@ const SEND_MESSAGE_CHUNK_INTERVAL_MS = 350;
 const WEIXIN_MAX_DELIVERY_MESSAGES = 10;
 
 function createWeixinChannelAdapter(config) {
-  const variant = normalizeAdapterVariant(config.weixinAdapterVariant);
-  if (variant === "legacy") {
-    return createLegacyWeixinChannelAdapter(config);
-  }
-
   let selectedAccount = null;
   let contextTokenCache = null;
   const inboundFilter = createInboundFilter();
+  let minWeixinChunk = loadWeixinConfig(config).minChunkChars;
 
   function ensureAccount() {
     if (!selectedAccount) {
@@ -73,19 +69,18 @@ function createWeixinChannelAdapter(config) {
     if (!content.trim()) {
       return Promise.resolve();
     }
+    const textChunks = preserveBlock ? null : chunkReplyTextForWeixin(content, minWeixinChunk);
     const sendChunks = preserveBlock
       ? splitUtf8(compactPlainTextForWeixin(content) || "Completed.", MAX_WEIXIN_CHUNK)
       : packChunksForWeixinDelivery(
-        chunkReplyTextForWeixin(content).length
-          ? chunkReplyTextForWeixin(content)
-          : ["Completed."],
+        textChunks?.length ? textChunks : ["Completed."],
         WEIXIN_MAX_DELIVERY_MESSAGES,
         MAX_WEIXIN_CHUNK
       );
     return sendChunks.reduce((promise, chunk, index) => promise
       .then(() => {
         const compactChunk = stripSentenceTailChineseFullStops(compactPlainTextForWeixin(chunk)) || "Completed.";
-        return sendTextV2({
+        return sendText({
           baseUrl: account.baseUrl,
           token: account.token,
           toUserId: userId,
@@ -106,7 +101,6 @@ function createWeixinChannelAdapter(config) {
     describe() {
       return {
         id: "weixin",
-        variant: "v2",
         kind: "channel",
         stateDir: config.stateDir,
         baseUrl: config.weixinBaseUrl,
@@ -148,14 +142,15 @@ function createWeixinChannelAdapter(config) {
     rememberContextToken,
     async getUpdates({ syncBuffer = "", timeoutMs = LONG_POLL_TIMEOUT_MS } = {}) {
       const account = ensureAccount();
-      const response = await getUpdatesV2({
+      const response = await getUpdates({
         baseUrl: account.baseUrl,
         token: account.token,
         getUpdatesBuf: syncBuffer,
         timeoutMs,
       });
-      if (typeof response?.get_updates_buf === "string" && response.get_updates_buf.trim()) {
-        this.saveSyncBuffer(response.get_updates_buf.trim());
+      const newBuf = typeof response?.get_updates_buf === "string" ? response.get_updates_buf.trim() : "";
+      if (newBuf && newBuf !== syncBuffer) {
+        this.saveSyncBuffer(newBuf);
       }
       const messages = Array.isArray(response?.msgs) ? response.msgs : [];
       for (const message of messages) {
@@ -217,12 +212,18 @@ function createWeixinChannelAdapter(config) {
         cdnBaseUrl: config.weixinCdnBaseUrl,
       });
     },
+    setMinChunkChars(value) {
+      const parsed = Number.parseInt(String(value), 10);
+      if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_WEIXIN_CHUNK) {
+        minWeixinChunk = parsed;
+        saveWeixinConfig(config, { minChunkChars: minWeixinChunk });
+      }
+      return minWeixinChunk;
+    },
+    getMinChunkChars() {
+      return minWeixinChunk;
+    },
   };
-}
-
-function normalizeAdapterVariant(value) {
-  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
-  return normalized === "legacy" ? "legacy" : "v2";
 }
 
 function splitUtf8(text, maxRunes) {
@@ -245,7 +246,7 @@ function compactPlainTextForWeixin(text) {
 function stripSentenceTailChineseFullStops(text) {
   return String(text || "")
     .split("\n")
-    .map((line) => line.replace(/。+(?=(?:\s*["'”’）)\]」』】])*\s*$)/u, ""))
+    .map((line) => line.replace(/。+(?=(?:\s*["'"'）)\]\u300d\u300f\u3011])*\s*$)/u, ""))
     .join("\n");
 }
 
@@ -279,7 +280,7 @@ function chunkReplyText(text, limit = 3500) {
   return chunks.filter(Boolean);
 }
 
-function chunkReplyTextForWeixin(text) {
+function chunkReplyTextForWeixin(text, minChunk = DEFAULT_MIN_WEIXIN_CHUNK) {
   const normalized = trimOuterBlankLines(String(text || "").replace(/\r\n/g, "\n"));
   if (!normalized.trim()) {
     return [];
@@ -320,7 +321,28 @@ function chunkReplyTextForWeixin(text) {
     }
     chunks.push(...chunkReplyText(unit, MAX_WEIXIN_CHUNK));
   }
-  return chunks.filter(Boolean);
+  return mergeShortChunks(chunks.filter(Boolean), MAX_WEIXIN_CHUNK, minChunk);
+}
+
+function mergeShortChunks(chunks, maxLength, minLength) {
+  if (!chunks.length) {
+    return chunks;
+  }
+  const merged = [];
+  let buffer = chunks[0];
+  for (let index = 1; index < chunks.length; index += 1) {
+    const chunk = chunks[index];
+    const isShort = buffer.length < minLength && chunk.length < minLength;
+    const joined = `${buffer}\n${chunk}`;
+    if (isShort && joined.length <= maxLength) {
+      buffer = joined;
+    } else {
+      merged.push(buffer);
+      buffer = chunk;
+    }
+  }
+  merged.push(buffer);
+  return merged;
 }
 
 function packChunksForWeixinDelivery(chunks, maxMessages = 10, maxChunkChars = 3800) {
@@ -389,12 +411,12 @@ function collectStreamingBoundaries(text) {
 
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index];
-    if (!/[。！？!?]/.test(char)) {
+    if (!/[\u3002\uff01\uff1f!?]/.test(char)) {
       continue;
     }
 
     let end = index + 1;
-    while (end < text.length && /["'”’）)\]」』】]/.test(text[end])) {
+    while (end < text.length && /["'"'）)\]\u300d\u300f\u3011]/.test(text[end])) {
       end += 1;
     }
     while (end < text.length && /[\t \n]/.test(text[end])) {
@@ -416,4 +438,15 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-module.exports = { createWeixinChannelAdapter };
+module.exports = {
+  createWeixinChannelAdapter,
+  splitUtf8,
+  compactPlainTextForWeixin,
+  stripSentenceTailChineseFullStops,
+  chunkReplyText,
+  chunkReplyTextForWeixin,
+  mergeShortChunks,
+  packChunksForWeixinDelivery,
+  collectStreamingBoundaries,
+  trimOuterBlankLines,
+};

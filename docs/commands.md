@@ -12,6 +12,8 @@ It defines stable internal actions first, then lets each channel expose its own 
 
 This keeps the core naming stable when new runtimes or channels are added later.
 
+The runtime can be `codex` or `claudecode`, but the documented command surface stays the same.
+
 ## Current Action Groups
 
 ### Lifecycle & Diagnostics
@@ -19,6 +21,9 @@ This keeps the core naming stable when new runtimes or channels are added later.
 - `app.login`
 - `app.accounts`
 - `app.start`
+- `app.shared_start`
+- `app.shared_open`
+- `app.shared_status`
 - `app.doctor`
 
 ### Workspace & Thread
@@ -26,8 +31,11 @@ This keeps the core naming stable when new runtimes or channels are added later.
 - `workspace.bind`
 - `workspace.status`
 - `thread.new`
+- `thread.reread`
 - `thread.switch`
 - `thread.stop`
+- `system.checkin_range`
+- `channel.chunk_min`
 
 ### Approvals & Control
 
@@ -43,6 +51,7 @@ This keeps the core naming stable when new runtimes or channels are added later.
 - `timeline.write`
 - `reminder.create`
 - `diary.append`
+- `app.star`
 - `app.help`
 
 ## Current Terminal Commands
@@ -69,15 +78,15 @@ Notes:
 
 ### reminder
 
-- `npm run reminder:write -- --delay 30m --text "Reminder text"`
-- `npm run reminder:write -- --delay 1h30m --text "Reminder text"`
-- `printf '%s\n' 'Reminder text with quotes or longer context' | npm run reminder:write -- --delay 20m --stdin`
-- `npm run reminder:write -- --at "2026-04-07 21:30" --text "Reminder text"`
+- `cyberboss reminder write --delay 30m --text "Reminder text"`
+- `cyberboss reminder write --delay 1h30m --text "Reminder text"`
+- `cyberboss reminder write --delay 20m --text-file /absolute/path/to/reminder.txt`
+- `cyberboss reminder write --at "2026-04-07 21:30" --text "Reminder text"`
 
 ### diary
 
-- `npm run diary:write -- --title "Title" --text "Content"`
-- `npm run diary:write -- --date 2026-04-06 --title "4.6" --text "Content"`
+- `cyberboss diary write --title "Title" --text "Content"`
+- `cyberboss diary write --date 2026-04-06 --title "4.6" --text-file /absolute/path/to/entry.md`
 
 Notes:
 - `--title` only affects the entry title
@@ -86,8 +95,8 @@ Notes:
 
 ### system
 
-- `npm run system:send -- --text "System message"`
-- `npm run system:checkin`
+- `cyberboss system send --text "System message"`
+- `cyberboss system checkin-poller`
 
 Notes:
 - `checkin` is usually better started through shared mode: `npm run shared:start`
@@ -95,13 +104,13 @@ Notes:
 
 ### timeline
 
-- `npm run timeline:write -- --date YYYY-MM-DD --stdin`
-- `npm run timeline:build`
-- `npm run timeline:serve`
-- `npm run timeline:dev`
-- `npm run timeline:screenshot -- --send`
-- `TIMELINE_FOR_AGENT_LOCALE=zh-CN npm run timeline:serve`
-- `TIMELINE_FOR_AGENT_LOCALE=en npm run timeline:screenshot -- --send`
+- `cyberboss timeline write --date YYYY-MM-DD --events-file /absolute/path/to/events.json`
+- `cyberboss timeline build`
+- `cyberboss timeline serve`
+- `cyberboss timeline dev`
+- `cyberboss timeline screenshot --send`
+- `cyberboss timeline serve --locale zh-CN`
+- `cyberboss timeline screenshot --send --locale en`
 
 Notes:
 - `timeline:screenshot -- --send` queues the screenshot for the current WeChat bridge and automatically sends the result back to the current WeChat user.
@@ -117,11 +126,14 @@ All `reminder / diary / system / timeline` commands listed here are already usab
 - `/reread`
 - `/stop`
 - `/switch <threadId>`
+- `/checkin <min>-<max>`
+- `/chunk <number>`
 - `/yes`
 - `/always`
 - `/no`
 - `/model`
 - `/model <id>`
+- `/star`
 - `/help`
 
 Notes:

@@ -56,7 +56,7 @@ class ThreadStateStore {
       case "runtime.turn.failed":
         next.status = "failed";
         next.turnId = event.payload.turnId || next.turnId;
-        next.lastError = event.payload.text || "Execution failed";
+        next.lastError = event.payload.text || "❌ Execution failed";
         next.pendingApproval = null;
         break;
       default:

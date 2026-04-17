@@ -18,7 +18,7 @@ function createTempFile(name, content) {
 
 test("agent command reminder stays short and avoids npm prefix env", () => {
   const reminder = buildAgentCommandReminder();
-  assert.match(reminder, /trust workspace help only/i);
+  assert.match(reminder, /must strictly follow workspace help only/i);
   assert.doesNotMatch(reminder, /CYBERBOSS_HOME/);
   assert.doesNotMatch(reminder, /npm --prefix/);
 });

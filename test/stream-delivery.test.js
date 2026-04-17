@@ -3,7 +3,7 @@ const assert = require("node:assert/strict");
 
 const { StreamDelivery } = require("../src/core/stream-delivery");
 
-const DEFERRED_REPLY_NOTICE = "由于微信 context_token 的限制，上轮对话里有一部分内容当时没能送达；这次用户再次发来消息、context_token 刷新后，先把遗留内容补上。";
+const DEFERRED_REPLY_NOTICE = "由于微信 context_token 的限制，上轮对话里有一部分内容当时没能送达；这次用户再次发来消息、context_token 刷新后，先把遗留内容补上。如果这种情况反复出现，可发送 /chunk <数字>（例如 /chunk 50）调大最小合并字符数，减少消息分片。";
 const DEFERRED_PLAIN_REPLY_HEADER = "===== 上轮对话遗留内容 =====";
 const DEFERRED_SYSTEM_REPLY_HEADER = "===== 期间模型主动联系 =====";
 const CURRENT_REPLY_HEADER = "===== 本轮模型回复 =====";
@@ -49,6 +49,17 @@ async function runCompletedTurn(streamDelivery, { threadId, turnId, itemId, text
   await streamDelivery.handleRuntimeEvent({
     type: "runtime.turn.completed",
     payload: { threadId, turnId },
+  });
+}
+
+async function runCompletedTurnWithResultOnly(streamDelivery, { threadId, turnId, text }) {
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId, turnId },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.completed",
+    payload: { threadId, turnId, text },
   });
 }
 
@@ -216,6 +227,28 @@ test("thread-level targets are consumed in turn order instead of overwriting act
       contextToken: "ctx-weixin",
     },
   ]);
+});
+
+test("turn.completed result text is delivered when no reply items were emitted", async () => {
+  const { sent, streamDelivery, bindingByThreadId } = createHarness();
+  bindingByThreadId.set("thread-result", { bindingKey: "binding-result" });
+  streamDelivery.setReplyTarget("binding-result", {
+    userId: "user-result",
+    contextToken: "ctx-result",
+    provider: "weixin",
+  });
+
+  await runCompletedTurnWithResultOnly(streamDelivery, {
+    threadId: "thread-result",
+    turnId: "turn-result",
+    text: "工具执行完了，这是最终回复",
+  });
+
+  assert.deepEqual(sent, [{
+    userId: "user-result",
+    text: "工具执行完了，这是最终回复",
+    contextToken: "ctx-result",
+  }]);
 });
 
 test("plain weixin reply still strips protocol leak text", async () => {

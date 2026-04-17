@@ -3,13 +3,13 @@
 [中文](./README.zh-CN.md) · English
 
 # The Overbearing Boss Fell for My ADHD
-## Cyberboss: a WeChat bridge built on Codex
+## Cyberboss: a WeChat bridge for Codex and Claude Code
 
 > "Keep escaping into dopamine if you want. I'll still catch you at the next timestamp."
 
 [![Node >=22](https://img.shields.io/badge/Node-22%2B-3C873A)](./package.json)
 [![License: AGPLv3](https://img.shields.io/badge/License-AGPLv3-b31b1b)](./LICENSE)
-[![Runtime-Codex](https://img.shields.io/badge/Runtime-Codex-111827)](#technical-stack)
+[![Runtime-Codex%20%7C%20ClaudeCode](https://img.shields.io/badge/Runtime-Codex%20%7C%20ClaudeCode-111827)](#technical-stack)
 [![Bridge-Weixin](https://img.shields.io/badge/Bridge-Weixin-07C160)](#technical-stack)
 [![Timeline-Enabled](https://img.shields.io/badge/Timeline-Enabled-8b5cf6)](#core-features)
 
@@ -30,7 +30,7 @@
 
 Cyberboss is not another polite productivity timer. It is not a to-do list with better branding either.
 
-It is an agent bridge that plugs Codex directly into WeChat and turns it into a time-aware, context-persistent accountability companion. It does not wait for you to "start a session". It watches the flow of your day, notices when you disappear, and decides when to show up again.
+It is an agent bridge that plugs a local coding runtime directly into WeChat and turns it into a time-aware, context-persistent accountability companion. It currently supports Codex and Claude Code while keeping the same commands and day-to-day behavior. It does not wait for you to "start a session". It watches the flow of your day, notices when you disappear, and decides when to show up again.
 
 ## Why Cyberboss?
 
@@ -77,7 +77,7 @@ Cyberboss builds on top of `timeline-for-agent`, then adds WeChat, reminders, di
 ## Technical Stack
 
 - **Core**
-  Codex runtime plus a shared `codex app-server` for thread continuity, approvals, and tool execution.
+  A pluggable runtime layer for Codex and Claude Code, with the same WeChat command surface and shared-thread workflow.
 - **Bridge**
   A WeChat HTTP bridge with long-poll synchronization for inbound messages, outbound replies, files, and status transitions.
 - **Task System**
@@ -103,7 +103,7 @@ Cyberboss assumes none of that. It treats the user as someone who may drift, dis
 ### Requirements
 
 - Node.js `>= 22`
-- `codex` installed locally
+- `codex` or `claude` installed locally
 - Chrome / Chromium / Edge if you want screenshot features
 
 ### Get the source and install dependencies
@@ -136,10 +136,43 @@ CYBERBOSS_WORKSPACE_ROOT=/absolute/path/to/your/project
 Common optional variables:
 
 ```dotenv
-CYBERBOSS_ACCOUNT_ID=
+CYBERBOSS_RUNTIME=codex
 CYBERBOSS_CODEX_ENDPOINT=ws://127.0.0.1:8765
-CYBERBOSS_WEIXIN_ADAPTER=v2
+CYBERBOSS_CODEX_COMMAND=
+CYBERBOSS_CLAUDE_COMMAND=claude
+CYBERBOSS_CLAUDE_MODEL=
+CYBERBOSS_CLAUDE_PERMISSION_MODE=default
+CYBERBOSS_CLAUDE_DISABLE_VERBOSE=false
+CYBERBOSS_CLAUDE_EXTRA_ARGS=
+CYBERBOSS_ACCOUNT_ID=
+CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS=20
+CYBERBOSS_WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
+CYBERBOSS_WEIXIN_CDN_BASE_URL=https://novac2c.cdn.weixin.qq.com/c2c
+CYBERBOSS_WEIXIN_QR_BOT_TYPE=3
 ```
+
+What these do:
+
+- `CYBERBOSS_RUNTIME`
+  Choose `codex` or `claudecode`. The command set stays the same.
+- `CYBERBOSS_CODEX_ENDPOINT`
+  Reuse an existing shared Codex app-server instead of spawning a private runtime.
+- `CYBERBOSS_CODEX_COMMAND`
+  Override the Codex launcher when `codex` is not directly on your `PATH`.
+- `CYBERBOSS_CLAUDE_COMMAND`
+  Override the Claude launcher. Default is `claude`.
+- `CYBERBOSS_CLAUDE_MODEL`
+  Set the default Claude model.
+- `CYBERBOSS_CLAUDE_PERMISSION_MODE`
+  Set Claude's permission mode before the bridge starts.
+- `CYBERBOSS_CLAUDE_DISABLE_VERBOSE`
+  Disable verbose Claude terminal output.
+- `CYBERBOSS_CLAUDE_EXTRA_ARGS`
+  Append extra Claude CLI arguments as a comma-separated list.
+- `CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS`
+  Set the default minimum merge size for short WeChat reply chunks.
+- `CYBERBOSS_WEIXIN_BASE_URL`, `CYBERBOSS_WEIXIN_CDN_BASE_URL`, `CYBERBOSS_WEIXIN_QR_BOT_TYPE`
+  Override the WeChat bridge endpoints and QR bot type when your deployment needs it.
 
 Why this matters:
 
@@ -157,17 +190,19 @@ If you plan to use shared mode, set `CYBERBOSS_WORKSPACE_ROOT` before the first 
 - `npm run accounts`
   List saved local accounts
 - `npm run shared:start`
-  Default startup path. Starts the shared `codex app-server` and the shared WeChat bridge
+  Default startup path. Starts the shared runtime bridge and the shared WeChat bridge
 - `npm run shared:open`
   Default attach path. Opens the currently bound shared thread in your terminal
 - `npm run shared:status`
-  Check shared `app-server`, shared bridge, and `readyz`
+  Check the shared runtime process, shared bridge, and `readyz`
 - `npm run doctor`
   Inspect current config, channel/runtime boundaries, and thread status
 - `npm run help`
   Show stable command entrypoints
 
 Here, `checkin` means the random wake-up mechanism, not a fixed periodic reminder.
+
+Switch the runtime with `CYBERBOSS_RUNTIME`. You do not need a different command set for Claude Code.
 
 `npm run start` and `npm run start:checkin` are still useful for minimal local debugging, but they are not the recommended way to observe or debug the real shared bridge workflow.
 
@@ -185,16 +220,22 @@ Here, `checkin` means the random wake-up mechanism, not a fixed periodic reminde
   Switch to a specific thread
 - `/stop`
   Stop the current running turn
+- `/checkin <min>-<max>`
+  Update the proactive random check-in range for the current project
+- `/chunk <number>`
+  Adjust the minimum merge size for short WeChat reply chunks
 - `/yes`
   Allow the current approval once
 - `/always`
-  Persist approval for the same command prefix inside the current project
+  Keep allowing the same kind of command inside the current project
 - `/no`
   Reject the current approval
 - `/model`
   Show current model
 - `/model <id>`
   Switch model
+- `/star`
+  Show the GitHub star guide inside WeChat
 - `/help`
   Show WeChat command help
 
@@ -206,7 +247,7 @@ Plain text messages go directly to the currently bound thread. If nothing is bou
 
 ### Observe the same thread from WeChat and terminal
 
-If you want WeChat and your local terminal to stay attached to the same Codex thread, use shared mode:
+If you want WeChat and your local terminal to stay attached to the same shared thread, use shared mode:
 
 Terminal 1:
 
@@ -229,7 +270,9 @@ Useful diagnostics:
 Notes:
 
 - Shared mode is the default mode in this README
-- Do not run a private spawned runtime for WeChat if you expect terminal and WeChat to watch the same thread
+- The same WeChat commands and day-to-day behavior apply under both Codex and Claude Code
+- If `CYBERBOSS_RUNTIME=claudecode`, the local Claude window currently works best as a listener for the shared thread
+- Do not let WeChat attach to a private spawned runtime if you expect terminal and WeChat to watch the same thread
 - Do not keep multiple `cyberboss` bridge processes alive at the same time
 - Do not put `npm run shared:start` in the background; it is the main shared bridge process
 
@@ -248,14 +291,22 @@ Common contents:
   WeChat bot account data
 - `sessions.json`
   workspace, thread, model, and approval state
+- `weixin-config.json`
+  WeChat reply chunk configuration
 - `sync-buffers/`
   WeChat long-poll synchronization buffers
+- `inbox/`
+  saved incoming WeChat images and attachments
 - `weixin-instructions.md`
   local persona file generated on first run
 - `reminder-queue.json`
   reminder queue
 - `system-message-queue.json`
   system / check-in queue
+- `deferred-system-replies.json`
+  replies waiting for the next usable WeChat context token
+- `checkin-config.json`
+  saved proactive check-in range
 - `timeline-screenshot-queue.json`
   screenshot job queue
 - `diary/`
@@ -263,40 +314,42 @@ Common contents:
 - `timeline/`
   timeline data, site, and screenshots
 - `logs/`
-  shared bridge and shared app-server logs
+  shared bridge and shared runtime logs
 
 This is the runtime state directory, not your project workspace. The WeChat thread and the terminal thread should still be opened against your actual project directory.
 
 <a id="agent-guide"></a>
 ## Agent Guide
 
-The following commands are primarily for agents and automations, not the main daily entrypoints for end users.
+The following commands are primarily for agents and automations, not the main daily entrypoints for end users. The same local command entrypoints apply under both Codex and Claude Code.
 
 ### Common agent commands
 
-- `npm run reminder:write -- --delay 30m --text "Reminder text"`
+- `cyberboss reminder write --delay 30m --text "Reminder text"`
   Write a reminder for the future self
-- `npm run reminder:write -- --at "2026-04-07 21:30" --text "Reminder text"`
+- `cyberboss reminder write --delay 20m --text-file /absolute/path/to/reminder.txt`
+  Safer reminder entry for long or quote-heavy text
+- `cyberboss reminder write --at "2026-04-07 21:30" --text "Reminder text"`
   Write a reminder at an explicit time
-- `npm run diary:write -- --title Title --text "Content"`
+- `cyberboss diary write --title Title --text "Content"`
   Write a local diary entry
-- `npm run diary:write -- --date 2026-04-06 --title "4.6" --text "Content"`
+- `cyberboss diary write --date 2026-04-06 --title "4.6" --text-file /absolute/path/to/entry.md`
   Write a diary entry into a specific date file
-- `npm run timeline:write -- --date YYYY-MM-DD --stdin`
+- `cyberboss timeline write --date YYYY-MM-DD --events-file /absolute/path/to/events.json`
   Incrementally write timeline events
-- `npm run timeline:build`
+- `cyberboss timeline build`
   Build the static timeline site
-- `npm run timeline:serve`
+- `cyberboss timeline serve`
   Start the static timeline site server
-- `npm run timeline:dev`
+- `cyberboss timeline dev`
   Start the hot-reload timeline dev server
-- `npm --prefix "$CYBERBOSS_HOME" run timeline:screenshot -- --send`
+- `cyberboss timeline screenshot --send`
   Stable screenshot entrypoint; queues the screenshot for the current WeChat bridge
-- `npm run channel:send-file -- --path /absolute/path`
+- `cyberboss channel send-file --path /absolute/path`
   Send an existing local file back to the current WeChat chat
-- `npm run system:send -- --text "System message"`
+- `cyberboss system send --text "System message"`
   Inject a hidden system trigger into the local system queue
-- `npm run system:checkin`
+- `cyberboss system checkin-poller`
   Low-level random check-in entrypoint, mostly useful for debugging
 
 ### Agent conventions

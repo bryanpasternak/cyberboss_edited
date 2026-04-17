@@ -106,6 +106,7 @@ class StreamDelivery {
       case "runtime.turn.completed": {
         const state = this.ensureRunState(threadId, turnId);
         state.turnId = turnId || state.turnId;
+        this.captureTurnCompletionText(state, event.payload.text);
         await this.flush(state, { force: true });
         this.disposeRunState(state.runKey);
         return;
@@ -174,6 +175,18 @@ class StreamDelivery {
         this.deferredReplyPrefixByBindingKey.delete(linked.bindingKey);
       }
     }
+  }
+
+  captureTurnCompletionText(state, text) {
+    const normalized = trimOuterBlankLines(normalizeLineEndings(text));
+    if (!normalized || state.itemOrder.length > 0) {
+      return;
+    }
+    this.upsertItem(state, {
+      itemId: `result-${state.turnId || state.threadId}`,
+      text: normalized,
+      completed: true,
+    });
   }
 
   upsertItem(state, { itemId, text, completed }) {

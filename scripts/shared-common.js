@@ -4,6 +4,18 @@ const os = require("os");
 const path = require("path");
 const { spawn } = require("child_process");
 
+try {
+  require("dotenv").config({ path: path.join(process.cwd(), ".env") });
+} catch {
+  // ignore
+}
+
+try {
+  require("dotenv").config({ path: path.join(os.homedir(), ".cyberboss", ".env") });
+} catch {
+  // ignore
+}
+
 const rootDir = path.resolve(__dirname, "..");
 const port = String(process.env.CYBERBOSS_SHARED_PORT || "8765");
 const listenUrl = `ws://127.0.0.1:${port}`;
@@ -104,6 +116,10 @@ function spawnDetachedCommand(command, args, { logFile, cwd = rootDir, env = {} 
 }
 
 async function ensureSharedAppServer() {
+  if (process.env.CYBERBOSS_RUNTIME && process.env.CYBERBOSS_RUNTIME !== "codex") {
+    return { pid: 0, status: "skipped" };
+  }
+
   ensureLogDir();
   const pidFromFile = readPidFile(appServerPidFile);
   if (pidFromFile && isPidAlive(pidFromFile) && (await checkReadyz())) {

@@ -61,5 +61,41 @@ test("handleCheckinCommand stores the new range and replies in English", async (
     maxIntervalMs: 21 * 60_000,
   });
   assert.equal(sent.length, 1);
-  assert.equal(sent[0].text, "Check-in interval reset to 7-21 minutes and will apply on the next polling cycle.");
+  assert.equal(sent[0].text, "✅ Check-in interval reset to 7-21 minutes and will apply on the next polling cycle.");
+});
+
+test("handleChunkCommand reports current value and persists updates through the channel adapter", async () => {
+  const sent = [];
+  let minChunk = 20;
+  const appLike = {
+    channelAdapter: {
+      getMinChunkChars() {
+        return minChunk;
+      },
+      setMinChunkChars(value) {
+        minChunk = value;
+        return minChunk;
+      },
+      async sendText(payload) {
+        sent.push(payload);
+      },
+    },
+  };
+
+  await CyberbossApp.prototype.handleChunkCommand.call(appLike, {
+    senderId: "user-1",
+    contextToken: "ctx-1",
+  }, {
+    args: "",
+  });
+  await CyberbossApp.prototype.handleChunkCommand.call(appLike, {
+    senderId: "user-1",
+    contextToken: "ctx-1",
+  }, {
+    args: "50",
+  });
+
+  assert.equal(sent[0].text, "💡 Current minimum merge chunk is 20 characters. Usage: /chunk <number> (e.g. /chunk 50)");
+  assert.equal(sent[1].text, "✅ Minimum merge chunk set to 50 characters. Shorter fragments will be merged into one message up to this size.");
+  assert.equal(minChunk, 50);
 });
