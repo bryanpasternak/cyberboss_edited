@@ -12,11 +12,12 @@ const CODEX_CLIENT_INFO = {
 };
 
 class CodexRpcClient {
-  constructor({ endpoint = "", env = process.env, codexCommand = "", extraWritableRoots = [] }) {
+  constructor({ endpoint = "", env = process.env, codexCommand = "", extraWritableRoots = [], mcpServerConfig = null }) {
     this.endpoint = endpoint;
     this.env = env;
     this.codexCommand = codexCommand || resolveDefaultCodexCommand(env);
     this.extraWritableRoots = normalizeWritableRoots(extraWritableRoots);
+    this.mcpServerConfig = mcpServerConfig;
     this.mode = endpoint ? "websocket" : "spawn";
     this.socket = null;
     this.child = null;
@@ -41,7 +42,7 @@ class CodexRpcClient {
 
     for (const command of commandCandidates) {
       try {
-        const spawnSpec = buildSpawnSpec(command);
+        const spawnSpec = buildSpawnSpec(command, this.mcpServerConfig);
         child = spawn(spawnSpec.command, spawnSpec.args, {
           env: { ...this.env },
           stdio: ["pipe", "pipe", "pipe"],
@@ -292,17 +293,46 @@ function buildCodexCommandCandidates(configuredCommand) {
   return [DEFAULT_CODEX_COMMAND];
 }
 
-function buildSpawnSpec(command) {
+function buildSpawnSpec(command, mcpServerConfig = null) {
+  const configArgs = buildCodexConfigArgs(mcpServerConfig);
   if (IS_WINDOWS) {
     return {
       command: "cmd.exe",
-      args: ["/c", command, "app-server"],
+      args: ["/c", command, ...configArgs, "app-server"],
     };
   }
   return {
     command,
-    args: ["app-server"],
+    args: [...configArgs, "app-server"],
   };
+}
+
+function buildCodexConfigArgs(mcpServerConfig) {
+  if (!mcpServerConfig || typeof mcpServerConfig !== "object") {
+    return [];
+  }
+  const name = normalizeNonEmptyString(mcpServerConfig.name) || "cyberboss_tools";
+  const command = normalizeNonEmptyString(mcpServerConfig.command);
+  const args = Array.isArray(mcpServerConfig.args)
+    ? mcpServerConfig.args.map((value) => normalizeNonEmptyString(value)).filter(Boolean)
+    : [];
+  if (!command) {
+    return [];
+  }
+  return [
+    "-c",
+    `mcp_servers.${name}.command=${quoteTomlString(command)}`,
+    "-c",
+    `mcp_servers.${name}.args=${formatTomlArray(args)}`,
+  ];
+}
+
+function quoteTomlString(value) {
+  return JSON.stringify(String(value ?? ""));
+}
+
+function formatTomlArray(values) {
+  return `[${values.map((value) => quoteTomlString(value)).join(",")}]`;
 }
 
 function normalizeNonEmptyString(value) {

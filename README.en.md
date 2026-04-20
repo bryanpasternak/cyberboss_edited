@@ -329,43 +329,25 @@ This is the runtime state directory, not your project workspace. The WeChat thre
 <a id="agent-guide"></a>
 ## Agent Guide
 
-The following commands are primarily for agents and automations, not the main daily entrypoints for end users. The same local command entrypoints apply under both Codex and Claude Code.
+Agent-facing Cyberboss capabilities are now project-native structured tools instead of local capability CLI commands.
 
-### Common agent commands
+### Common project tools
 
-- `cyberboss reminder write --delay 30m --text "Reminder text"`
-  Write a reminder for the future self
-- `cyberboss reminder write --delay 20m --text-file /absolute/path/to/reminder.txt`
-  Safer reminder entry for long or quote-heavy text
-- `cyberboss reminder write --at "2026-04-07 21:30" --text "Reminder text"`
-  Write a reminder at an explicit time
-- `cyberboss diary write --title Title --text "Content"`
-  Write a local diary entry
-- `cyberboss diary write --date 2026-04-06 --title "4.6" --text-file /absolute/path/to/entry.md`
-  Write a diary entry into a specific date file
-- `cyberboss timeline write --date YYYY-MM-DD --events-file /absolute/path/to/events.json`
-  Incrementally write timeline events
-- `cyberboss timeline build`
-  Build the static timeline site
-- `cyberboss timeline serve`
-  Start the static timeline site server
-- `cyberboss timeline dev`
-  Start the hot-reload timeline dev server
-- `cyberboss timeline screenshot --send`
-  Stable screenshot entrypoint; queues the screenshot for the current WeChat bridge
-- `cyberboss channel send-file --path /absolute/path`
-  Send an existing local file back to the current WeChat chat
-- `cyberboss system send --text "System message"`
-  Inject a hidden system trigger into the local system queue
-- `cyberboss system checkin-poller`
-  Low-level random check-in entrypoint, mostly useful for debugging
+- `cyberboss_reminder_create`
+- `cyberboss_diary_append`
+- `cyberboss_timeline_write`
+- `cyberboss_timeline_build`
+- `cyberboss_timeline_serve`
+- `cyberboss_timeline_dev`
+- `cyberboss_timeline_screenshot`
+- `cyberboss_channel_send_file`
+- `cyberboss_system_send`
 
 ### Agent conventions
 
-- Prefer stable documented entrypoints from this README, `--help`, and [docs/commands.md](./docs/commands.md)
-- If parameters are unclear, check `--help` first
+- Use Cyberboss project tools for diary, reminder, timeline, screenshot, and file-send operations instead of shell commands or local CLI wrappers
+- Prefer documented lifecycle entrypoints from this README, `--help`, and [docs/commands.md](./docs/commands.md) for human terminal usage
 - On first failure, report the concrete error before reading source code
-- If the job is only to send a file or a screenshot back to WeChat, use the existing command instead of reaching into internal adapter methods
 
 ## Docs
 

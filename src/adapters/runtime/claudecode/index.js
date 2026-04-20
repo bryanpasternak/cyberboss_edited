@@ -1,5 +1,6 @@
 const path = require("path");
 const os = require("os");
+const fs = require("fs");
 const { ClaudeCodeProcessClient } = require("./process-client");
 const { mapClaudeCodeMessageToRuntimeEvent } = require("./events");
 const { SessionStore } = require("../codex/session-store");
@@ -45,6 +46,7 @@ function createClaudeCodeRuntimeAdapter(config) {
       permissionMode: config.claudePermissionMode || "default",
       disableVerbose: Boolean(config.claudeDisableVerbose),
       extraArgs: config.claudeExtraArgs || [],
+      pluginDirs: resolveClaudePluginDirs(config),
       ipcServer,
       workspaceRoot,
     });
@@ -289,6 +291,16 @@ function filterClaudeCodeEnv(env) {
 }
 
 module.exports = { createClaudeCodeRuntimeAdapter };
+
+function resolveClaudePluginDirs(config = {}) {
+  const pluginDir = typeof config?.claudeProjectPluginDir === "string"
+    ? config.claudeProjectPluginDir.trim()
+    : "";
+  if (!pluginDir || !fs.existsSync(pluginDir)) {
+    return [];
+  }
+  return [pluginDir];
+}
 
 function normalizeThreadId(value) {
   return typeof value === "string" ? value.replace(/\s+/g, "").trim() : "";

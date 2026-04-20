@@ -4,9 +4,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { buildAgentCommandGuide, buildAgentCommandReminder } = require("../src/core/command-registry");
-const { resolveBody: resolveReminderBody } = require("../src/app/reminder-write-cli");
-const { resolveBody: resolveDiaryBody } = require("../src/app/diary-write-cli");
+const { buildProjectToolGuide } = require("../src/tools/tool-host");
+const { resolveBodyInput } = require("../src/services/text-input");
 const { prepareTimelineInvocation } = require("../src/integrations/timeline");
 
 function createTempFile(name, content) {
@@ -16,39 +15,29 @@ function createTempFile(name, content) {
   return filePath;
 }
 
-test("agent command reminder stays short and avoids npm prefix env", () => {
-  const reminder = buildAgentCommandReminder();
-  assert.match(reminder, /must strictly follow workspace help only/i);
-  assert.doesNotMatch(reminder, /CYBERBOSS_HOME/);
-  assert.doesNotMatch(reminder, /npm --prefix/);
-});
-
-test("scoped command guide uses the cyberboss launcher for the requested topic only", () => {
-  const guide = buildAgentCommandGuide(["reminder"]);
-  assert.match(guide, /REMINDER COMMAND HELP/);
-  assert.match(guide, /bin[\\/]+cyberboss(?:\.cmd)?/);
-  assert.doesNotMatch(guide, /TIMELINE COMMAND HELP/);
-  assert.doesNotMatch(guide, /CYBERBOSS_HOME/);
+test("project tool guide tells the model to use project tools instead of shell commands", () => {
+  const guide = buildProjectToolGuide(["reminder"]);
+  assert.match(guide, /project tools/i);
+  assert.match(guide, /cyberboss_reminder_create/);
   assert.doesNotMatch(guide, /npm --prefix/);
 });
 
-test("timeline command guide shows a valid event payload shape", () => {
-  const guide = buildAgentCommandGuide(["timeline"]);
-  assert.match(guide, /"events":\[/);
-  assert.match(guide, /"startAt":/);
-  assert.match(guide, /"endAt":/);
-  assert.match(guide, /"subcategoryId":/);
+test("project tool guide scopes timeline hints to timeline tools", () => {
+  const guide = buildProjectToolGuide(["timeline"]);
+  assert.match(guide, /cyberboss_timeline_write/);
+  assert.match(guide, /cyberboss_timeline_screenshot/);
+  assert.doesNotMatch(guide, /cyberboss_reminder_create/);
 });
 
 test("reminder body can be loaded from --text-file", async () => {
   const filePath = createTempFile("reminder.txt", "  remember me  \n");
-  const body = await resolveReminderBody({ text: "", textFile: filePath, useStdin: false });
+  const body = await resolveBodyInput({ text: "", textFile: filePath });
   assert.equal(body, "remember me");
 });
 
 test("diary body can be loaded from --text-file", async () => {
   const filePath = createTempFile("diary.md", "\nline one\nline two\n");
-  const body = await resolveDiaryBody({ text: "", textFile: filePath, useStdin: false });
+  const body = await resolveBodyInput({ text: "", textFile: filePath });
   assert.equal(body, "line one\nline two");
 });
 

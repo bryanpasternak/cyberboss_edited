@@ -45,7 +45,8 @@ function loadWechatInstructions(config = {}) {
   if (operations) {
     sections.push(operations);
   }
-  sections.push("For local commands, you must strictly follow workspace help only. Do not invent variants.");
+  sections.push("Cyberboss project tools are the stable way to write diary entries, create reminders, update timeline, capture screenshots, and send files.");
+  sections.push("Use project tools for Cyberboss capabilities instead of shell commands or local CLI wrappers.");
   return sections.join("\n\n").trim();
 }
 

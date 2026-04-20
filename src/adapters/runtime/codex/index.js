@@ -1,3 +1,5 @@
+const path = require("path");
+const fs = require("fs");
 const { CodexRpcClient } = require("./rpc-client");
 const { buildOpeningTurnText, buildInstructionRefreshText } = require("../shared-instructions");
 const { mapCodexMessageToRuntimeEvent } = require("./events");
@@ -24,6 +26,7 @@ function createCodexRuntimeAdapter(config) {
         codexCommand: config.codexCommand,
         env: process.env,
         extraWritableRoots: [config.stateDir],
+        mcpServerConfig: resolveCodexProjectToolMcpServerConfig(),
       });
     }
     return client;
@@ -172,6 +175,19 @@ function createCodexRuntimeAdapter(config) {
 }
 
 module.exports = { createCodexRuntimeAdapter };
+
+function resolveCodexProjectToolMcpServerConfig() {
+  const home = process.env.CYBERBOSS_HOME || path.resolve(__dirname, "..", "..", "..");
+  const scriptPath = path.join(home, "bin", "cyberboss.js");
+  if (!fs.existsSync(scriptPath)) {
+    return null;
+  }
+  return {
+    name: "cyberboss_tools",
+    command: process.execPath,
+    args: [scriptPath, "tool-mcp-server", "--runtime-id", "codex"],
+  };
+}
 
 function waitForTurnCompletion(client, threadId) {
   return new Promise((resolve, reject) => {

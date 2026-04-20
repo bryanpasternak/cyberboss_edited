@@ -1,7 +1,7 @@
 const { spawn } = require("child_process");
 
 class ClaudeCodeProcessClient {
-  constructor({ command = "claude", cwd, env, model = "", permissionMode = "default", disableVerbose = false, extraArgs = [], ipcServer = null, workspaceRoot = "" }) {
+  constructor({ command = "claude", cwd, env, model = "", permissionMode = "default", disableVerbose = false, extraArgs = [], pluginDirs = [], ipcServer = null, workspaceRoot = "" }) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
@@ -9,6 +9,7 @@ class ClaudeCodeProcessClient {
     this.permissionMode = permissionMode;
     this.disableVerbose = disableVerbose;
     this.extraArgs = extraArgs;
+    this.pluginDirs = pluginDirs;
     this.ipcServer = ipcServer;
     this.workspaceRoot = workspaceRoot;
     this.child = null;
@@ -51,6 +52,7 @@ class ClaudeCodeProcessClient {
       permissionMode: this.permissionMode,
       disableVerbose: this.disableVerbose,
       extraArgs: this.extraArgs,
+      pluginDirs: this.pluginDirs,
       resumeSessionId,
     });
     const child = spawn(this.command, args, {
@@ -347,7 +349,7 @@ class ClaudeCodeProcessClient {
   }
 }
 
-function buildArgs({ model, permissionMode, disableVerbose, extraArgs, resumeSessionId }) {
+function buildArgs({ model, permissionMode, disableVerbose, extraArgs, pluginDirs, resumeSessionId }) {
   const args = [
     "--output-format", "stream-json",
     "--input-format", "stream-json",
@@ -364,6 +366,13 @@ function buildArgs({ model, permissionMode, disableVerbose, extraArgs, resumeSes
   }
   if (model) {
     args.push("--model", model);
+  }
+  if (Array.isArray(pluginDirs)) {
+    for (const pluginDir of pluginDirs) {
+      if (typeof pluginDir === "string" && pluginDir.trim()) {
+        args.push("--plugin-dir", pluginDir.trim());
+      }
+    }
   }
   if (Array.isArray(extraArgs)) {
     const safe = extraArgs.filter((arg) =>

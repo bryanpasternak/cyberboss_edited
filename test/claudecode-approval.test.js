@@ -135,9 +135,8 @@ test("claudecode assistant events map usage into context snapshots", () => {
   assert.equal(event.payload.currentTokens, 27201);
 });
 
-test("handleRuntimeEvent auto-approves built-in claudecode commands without prompting", async () => {
-  const responses = [];
-  const resolved = [];
+test("handleRuntimeEvent prompts for project shell commands instead of auto-approving them", async () => {
+  const prompts = [];
   const appLike = {
     streamDelivery: {
       async handleRuntimeEvent() {},
@@ -149,22 +148,24 @@ test("handleRuntimeEvent auto-approves built-in claudecode commands without prom
           findBindingForThreadId() {
             return { bindingKey: "binding-1", workspaceRoot: "/workspace" };
           },
+          getApprovalPromptState() {
+            return null;
+          },
+          rememberApprovalPrompt() {},
           getApprovalCommandAllowlistForWorkspace() {
             return [];
           },
         };
       },
       async respondApproval(payload) {
-        responses.push(payload);
+        throw new Error(`should not auto-approve ${JSON.stringify(payload)}`);
       },
     },
     threadStateStore: {
-      resolveApproval(threadId, status) {
-        resolved.push({ threadId, status });
-      },
+      resolveApproval() {},
     },
-    async sendApprovalPrompt() {
-      throw new Error("should not prompt for built-in commands");
+    async sendApprovalPrompt(payload) {
+      prompts.push(payload);
     },
   };
 
@@ -177,8 +178,7 @@ test("handleRuntimeEvent auto-approves built-in claudecode commands without prom
     },
   });
 
-  assert.deepEqual(responses, [{ requestId: "req-3", decision: "accept" }]);
-  assert.deepEqual(resolved, [{ threadId: "thread-1", status: "running" }]);
+  assert.equal(prompts.length, 1);
 });
 
 test("handleNewCommand asks runtime to start a fresh draft before clearing the saved thread", async () => {

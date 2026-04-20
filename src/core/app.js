@@ -9,9 +9,8 @@ const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { createClaudeCodeRuntimeAdapter } = require("../adapters/runtime/claudecode");
 const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
-const { buildAgentCommandGuide, buildWeixinHelpText } = require("./command-registry");
+const { buildWeixinHelpText } = require("./command-registry");
 const { CheckinConfigStore, parseCheckinRangeMinutes, resolveDefaultCheckinRange } = require("./checkin-config-store");
-const { resolvePreferredSenderId } = require("./default-targets");
 const { StreamDelivery } = require("./stream-delivery");
 const { ThreadStateStore } = require("./thread-state-store");
 const { DeferredSystemReplyStore } = require("./deferred-system-reply-store");
@@ -29,6 +28,8 @@ const {
   splitCommandLine,
 } = require("../adapters/runtime/shared/approval-command");
 const { runSystemCheckinPoller } = require("../app/system-checkin-poller");
+const { createProjectTooling } = require("../tools/create-project-tooling");
+const { buildProjectToolGuide } = require("../tools/tool-host");
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
@@ -50,8 +51,15 @@ class CyberbossApp {
   constructor(config) {
     this.config = config;
     this.channelAdapter = createWeixinChannelAdapter(config);
-    this.runtimeAdapter = createRuntimeAdapter(config);
     this.timelineIntegration = createTimelineIntegration(config);
+    const projectTooling = createProjectTooling(config, {
+      channelAdapter: this.channelAdapter,
+      timelineIntegration: this.timelineIntegration,
+    });
+    this.projectServices = projectTooling.services;
+    this.projectToolHost = projectTooling.toolHost;
+    this.runtimeContextStore = projectTooling.runtimeContextStore;
+    this.runtimeAdapter = createRuntimeAdapter(config);
     this.threadStateStore = new ThreadStateStore();
     this.systemMessageQueue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
     this.deferredSystemReplyQueue = new DeferredSystemReplyStore({ filePath: config.deferredSystemReplyQueueFile });
@@ -187,83 +195,18 @@ class CyberbossApp {
   }
 
   async sendTimelineScreenshot({ senderId = "", args = [], outputFile = "" } = {}) {
-    const targetUserId = normalizeText(senderId) || this.resolveDefaultTerminalUser();
-    if (!targetUserId) {
-      throw new Error("Cannot determine which WeChat user should receive the timeline screenshot. Configure CYBERBOSS_ALLOWED_USER_IDS first.");
-    }
-    const contextToken = this.channelAdapter.getKnownContextTokens()[targetUserId] || "";
-    if (!contextToken) {
-      throw new Error(`Cannot find a context token for user ${targetUserId}. Let this user talk to the bot once first.`);
-    }
-
-    const normalizedArgs = Array.isArray(args)
-      ? args.map((value) => String(value ?? "")).filter(Boolean)
-      : [];
-    const resolvedOutputFile = normalizeText(outputFile) || resolveTimelineScreenshotOutput(normalizedArgs);
-    const finalArgs = resolvedOutputFile
-      ? normalizedArgs
-      : [...normalizedArgs, "--output", path.join(os.tmpdir(), `cyberboss-timeline-${Date.now()}.png`)];
-    const savedPath = resolveTimelineScreenshotOutput(finalArgs);
-
-    await this.channelAdapter.sendTyping({
-      userId: targetUserId,
-      status: 1,
-      contextToken,
-    }).catch(() => {});
-    await this.timelineIntegration.runSubcommand("screenshot", finalArgs);
-    await this.channelAdapter.sendFile({
-      userId: targetUserId,
-      filePath: savedPath,
-      contextToken,
-    });
-    await this.channelAdapter.sendTyping({
-      userId: targetUserId,
-      status: 0,
-      contextToken,
-    }).catch(() => {});
-    return { userId: targetUserId, filePath: savedPath };
+    return this.projectServices.timeline.queueScreenshot({
+      userId: senderId,
+      outputFile,
+      args,
+    }, {});
   }
 
   async sendLocalFileToCurrentChat({ senderId = "", filePath = "" } = {}) {
-    const targetUserId = normalizeText(senderId) || this.resolveDefaultTerminalUser();
-    if (!targetUserId) {
-      throw new Error("Cannot determine which WeChat user should receive the file. Configure CYBERBOSS_ALLOWED_USER_IDS first.");
-    }
-
-    const contextToken = this.channelAdapter.getKnownContextTokens()[targetUserId] || "";
-    if (!contextToken) {
-      throw new Error(`Cannot find a context token for user ${targetUserId}. Let this user talk to the bot once first.`);
-    }
-
-    const requestedPath = normalizeText(filePath);
-    if (!requestedPath) {
-      throw new Error("Missing file path to send.");
-    }
-    const resolvedPath = path.resolve(requestedPath);
-    if (!fs.existsSync(resolvedPath)) {
-      throw new Error(`File does not exist: ${resolvedPath}`);
-    }
-    const stat = fs.statSync(resolvedPath);
-    if (!stat.isFile()) {
-      throw new Error(`Only files can be sent, not directories: ${resolvedPath}`);
-    }
-
-    await this.channelAdapter.sendTyping({
-      userId: targetUserId,
-      status: 1,
-      contextToken,
-    }).catch(() => {});
-    await this.channelAdapter.sendFile({
-      userId: targetUserId,
-      filePath: resolvedPath,
-      contextToken,
-    });
-    await this.channelAdapter.sendTyping({
-      userId: targetUserId,
-      status: 0,
-      contextToken,
-    }).catch(() => {});
-    return { userId: targetUserId, filePath: resolvedPath };
+    return this.projectServices.channelFile.sendToCurrentChat({
+      userId: senderId,
+      filePath,
+    }, {});
   }
 
   async handleIncomingMessage(message) {
@@ -307,14 +250,6 @@ class CyberbossApp {
     console.warn(
       `[cyberboss] queued deferred reply prefix sender=${normalized.senderId} count=${pendingReplies.length}`
     );
-  }
-
-  resolveDefaultTerminalUser() {
-    return resolvePreferredSenderId({
-      config: this.config,
-      accountId: this.channelAdapter.resolveAccount().accountId,
-      sessionStore: this.runtimeAdapter.getSessionStore(),
-    });
   }
 
   async handlePreparedMessage(normalized, { allowCommands }) {
@@ -381,6 +316,14 @@ class CyberbossApp {
           accountId: prepared.accountId,
           senderId: prepared.senderId,
         },
+      });
+      this.runtimeContextStore?.setActiveContext?.({
+        workspaceRoot,
+        runtimeId: this.runtimeAdapter.describe().id,
+        threadId: turn.threadId,
+        bindingKey,
+        accountId: prepared.accountId,
+        senderId: prepared.senderId,
       });
       this.turnGateStore.attachThread(pendingScopeKey, turn.threadId);
       const replyTarget = {
@@ -1812,81 +1755,11 @@ function matchesBuiltInCommandPrefix(commandTokens) {
     return true;
   }
 
-  if (normalized[0] === "npm") {
-    const runIndex = normalized.indexOf("run");
-    if (runIndex >= 0) {
-      const scriptName = normalizeCommandArgument(normalized[runIndex + 1]);
-      return isBuiltInScriptName(scriptName);
-    }
-  }
-
-  const executable = path.basename(normalized[0] || "");
-  if ((executable === "sh" || executable === "bash" || executable === "zsh")
-    && matchesBuiltInShellScript(normalized[1])) {
-    return true;
-  }
-  if (executable === "node" || executable === "node.exe") {
-    const binPath = normalizeCommandArgument(normalized[1]);
-    if (binPath === "./bin/cyberboss.js" || binPath.endsWith("/bin/cyberboss.js")) {
-      return matchesBuiltInCliCommand(normalized.slice(2));
-    }
-  }
-
-  if (executable === "cyberboss" || executable === "cyberboss.js") {
-    return matchesBuiltInCliCommand(normalized.slice(1));
-  }
-
   return false;
 }
 
 function normalizeCommandTokensForMatching(commandTokens) {
   return canonicalizeCommandTokens(commandTokens);
-}
-
-function isShellWrapper(command, flag) {
-  const executable = path.basename(normalizeCommandArgument(command));
-  return (executable === "sh" || executable === "bash" || executable === "zsh") && flag === "-lc";
-}
-
-function isBuiltInScriptName(scriptName) {
-  return scriptName === "reminder:write"
-    || scriptName === "diary:write"
-    || scriptName === "channel:send-file"
-    || scriptName === "system:send"
-    || scriptName === "system:checkin"
-    || scriptName.startsWith("timeline:");
-}
-
-function matchesBuiltInShellScript(scriptPath) {
-  const basename = path.basename(normalizeCommandArgument(scriptPath));
-  return basename === "timeline-screenshot.sh";
-}
-
-function matchesBuiltInCliCommand(tokens) {
-  if (!Array.isArray(tokens) || tokens.length < 2) {
-    return false;
-  }
-  const topic = normalizeCommandArgument(tokens[0]);
-  const action = normalizeCommandArgument(tokens[1]);
-  if (topic === "timeline") {
-    return action === "write"
-      || action === "build"
-      || action === "serve"
-      || action === "dev"
-      || action === "screenshot"
-      || action === "read"
-      || action === "categories"
-      || action === "proposals";
-  }
-  if (topic === "channel") {
-    return action === "send-file";
-  }
-  if (topic === "system") {
-    return action === "send" || action === "checkin-poller";
-  }
-  return (topic === "reminder" && action === "write")
-    || (topic === "diary" && action === "write")
-    || false;
 }
 
 function buildApprovalPromptText(approval) {
@@ -2035,7 +1908,7 @@ function buildInboundText(normalized, persisted = {}, config = {}, options = {})
         lines.push("For images, use `view_image`. Do not use `Read` or shell commands on image files.");
       }
     }
-    lines.push("For local commands, strictly follow workspace help only. Do not invent variants or wrappers.");
+    lines.push("For Cyberboss capabilities, use project tools instead of shell commands or local CLI wrappers.");
     lines.push(`If a required tool is missing, tell ${userName} exactly what is missing and that you cannot read the file yet.`);
   }
 
@@ -2151,7 +2024,7 @@ function buildIncomingCommandGuide(normalized, persisted = {}) {
   if (!topics.length) {
     return "";
   }
-  return buildAgentCommandGuide(topics);
+  return buildProjectToolGuide(topics);
 }
 
 function detectCommandTopics(normalized, persisted = {}) {
@@ -2255,16 +2128,4 @@ function stringifyRpcId(value) {
 
 function hasRpcId(value) {
   return stringifyRpcId(value) !== "";
-}
-
-
-function resolveTimelineScreenshotOutput(args) {
-  const normalizedArgs = Array.isArray(args) ? args : [];
-  for (let index = 0; index < normalizedArgs.length; index += 1) {
-    if (String(normalizedArgs[index] || "").trim() !== "--output") {
-      continue;
-    }
-    return String(normalizedArgs[index + 1] || "").trim();
-  }
-  return "";
 }

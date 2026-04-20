@@ -30,6 +30,7 @@ function readConfig() {
     deferredSystemReplyQueueFile: path.join(stateDir, "deferred-system-replies.json"),
     checkinConfigFile: path.join(stateDir, "checkin-config.json"),
     timelineScreenshotQueueFile: path.join(stateDir, "timeline-screenshot-queue.json"),
+    projectToolContextFile: path.join(stateDir, "project-tool-runtime-context.json"),
     weixinInstructionsFile: path.join(stateDir, "weixin-instructions.md"),
     weixinOperationsFile: path.resolve(__dirname, "..", "..", "templates", "weixin-operations.md"),
     diaryDir: path.join(stateDir, "diary"),
@@ -43,6 +44,8 @@ function readConfig() {
     claudePermissionMode: readTextEnv("CYBERBOSS_CLAUDE_PERMISSION_MODE") || "default",
     claudeDisableVerbose: readBoolEnv("CYBERBOSS_CLAUDE_DISABLE_VERBOSE"),
     claudeExtraArgs: readListEnv("CYBERBOSS_CLAUDE_EXTRA_ARGS"),
+    claudeProjectPluginDir: readTextEnv("CYBERBOSS_CLAUDE_PROJECT_PLUGIN_DIR")
+      || path.join(process.env.CYBERBOSS_HOME || path.resolve(__dirname, "..", ".."), "plugins", "cyberboss-tools"),
     sessionsFile: path.join(stateDir, "sessions.json"),
     startWithCheckin: (mode === "start" && hasArgFlag(argv, "--checkin")) || readBoolEnv("CYBERBOSS_ENABLE_CHECKIN"),
   };
