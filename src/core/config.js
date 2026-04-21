@@ -34,6 +34,20 @@ function readConfig() {
     weixinInstructionsFile: path.join(stateDir, "weixin-instructions.md"),
     weixinOperationsFile: path.resolve(__dirname, "..", "..", "templates", "weixin-operations.md"),
     diaryDir: path.join(stateDir, "diary"),
+    locationStoreFile: path.join(stateDir, "locations.json"),
+    locationHost: readTextEnv("CYBERBOSS_LOCATION_HOST") || "0.0.0.0",
+    locationPort: readIntEnv("CYBERBOSS_LOCATION_PORT") || 4318,
+    locationToken: readTextEnv("CYBERBOSS_LOCATION_TOKEN"),
+    locationHistoryLimit: readIntEnv("CYBERBOSS_LOCATION_HISTORY_LIMIT") || 1000,
+    locationMovementEventLimit: readIntEnv("CYBERBOSS_LOCATION_MOVEMENT_EVENT_LIMIT"),
+    locationStayMergeRadiusMeters: readIntEnv("CYBERBOSS_LOCATION_STAY_MERGE_RADIUS_METERS") || 50,
+    locationStayBreakConfirmRadiusMeters: readIntEnv("CYBERBOSS_LOCATION_STAY_BREAK_RADIUS_METERS") || 200,
+    locationStayBreakConfirmSamples: readIntEnv("CYBERBOSS_LOCATION_STAY_BREAK_SAMPLES") || 2,
+    locationMajorMoveThresholdMeters: readIntEnv("CYBERBOSS_LOCATION_MAJOR_MOVE_THRESHOLD_METERS") || 1000,
+    startWithLocationServer: resolveLocationServerEnabled({
+      mode,
+      enabled: readOptionalBoolEnv("CYBERBOSS_ENABLE_LOCATION_SERVER"),
+    }),
     syncBufferDir: path.join(stateDir, "sync-buffers"),
     codexEndpoint: readTextEnv("CYBERBOSS_CODEX_ENDPOINT"),
     codexCommand: readTextEnv("CYBERBOSS_CODEX_COMMAND"),
@@ -66,6 +80,20 @@ function readBoolEnv(name) {
   return value === "1" || value === "true" || value === "yes" || value === "on";
 }
 
+function readOptionalBoolEnv(name) {
+  const value = readTextEnv(name).toLowerCase();
+  if (!value) {
+    return undefined;
+  }
+  if (value === "1" || value === "true" || value === "yes" || value === "on") {
+    return true;
+  }
+  if (value === "0" || value === "false" || value === "no" || value === "off") {
+    return false;
+  }
+  return undefined;
+}
+
 function readIntEnv(name) {
   const value = readTextEnv(name);
   if (!value) {
@@ -77,6 +105,16 @@ function readIntEnv(name) {
 
 function hasArgFlag(argv, flag) {
   return Array.isArray(argv) && argv.some((item) => String(item || "").trim() === flag);
+}
+
+function resolveLocationServerEnabled({ mode, enabled }) {
+  if (mode !== "start") {
+    return false;
+  }
+  if (typeof enabled === "boolean") {
+    return enabled;
+  }
+  return false;
 }
 
 module.exports = { readConfig };

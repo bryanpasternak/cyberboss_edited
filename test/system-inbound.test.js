@@ -129,3 +129,87 @@ test("image attachments tell claudecode to use Read on the saved local image fil
     global.fetch = originalFetch;
   }
 });
+
+test("location arrive_home trigger enqueues a system action message", () => {
+  const queued = [];
+  CyberbossApp.prototype.handleLocationAccepted.call({
+    activeAccountId: "wx-account",
+    config: {
+      allowedUserIds: ["user-1"],
+      workspaceRoot: "/workspace",
+      workspaceId: "default",
+    },
+    runtimeAdapter: {
+      getSessionStore() {
+        return {};
+      },
+    },
+    systemMessageQueue: {
+      enqueue(message) {
+        queued.push(message);
+        return message;
+      },
+    },
+  }, {
+    appended: {
+      point: {
+        id: "point-1",
+        trigger: "arrive_home",
+        timestamp: "2026-04-18T16:00:00.000Z",
+        receivedAt: "2026-04-18T16:00:01.000Z",
+      },
+      movementEvent: null,
+    },
+  });
+
+  assert.equal(queued.length, 1);
+  assert.equal(queued[0].id, "location-trigger:point-1");
+  assert.equal(queued[0].senderId, "user-1");
+  assert.equal(queued[0].workspaceRoot, "/workspace");
+  assert.equal(queued[0].text, "User arrives home.");
+});
+
+test("location leave_home trigger and major move both enqueue system action messages", () => {
+  const queued = [];
+  CyberbossApp.prototype.handleLocationAccepted.call({
+    activeAccountId: "wx-account",
+    config: {
+      allowedUserIds: ["user-1"],
+      workspaceRoot: "/workspace",
+      workspaceId: "default",
+    },
+    runtimeAdapter: {
+      getSessionStore() {
+        return {};
+      },
+    },
+    systemMessageQueue: {
+      enqueue(message) {
+        queued.push(message);
+        return message;
+      },
+    },
+  }, {
+    appended: {
+      point: {
+        id: "point-2",
+        trigger: "leave_home",
+        timestamp: "2026-04-18T17:00:00.000Z",
+        receivedAt: "2026-04-18T17:00:02.000Z",
+      },
+      movementEvent: {
+        id: "move-1",
+        distanceMeters: 2400,
+        fromAddress: "Home",
+        toAddress: "Office",
+        movedAt: "2026-04-18T17:20:00.000Z",
+      },
+    },
+  });
+
+  assert.equal(queued.length, 2);
+  assert.equal(queued[0].id, "location-trigger:point-2");
+  assert.equal(queued[0].text, "User leaves home.");
+  assert.equal(queued[1].id, "location-move:move-1");
+  assert.match(queued[1].text, /location appears to have changed significantly/i);
+});

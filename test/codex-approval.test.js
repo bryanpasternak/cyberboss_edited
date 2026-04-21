@@ -30,6 +30,10 @@ test("codex MCP config auto-approves cyberboss tools", () => {
     args.join("\n"),
     /mcp_servers\.cyberboss_tools\.tools\.cyberboss_timeline_screenshot\.approval_mode="auto"/
   );
+  assert.match(
+    args.join("\n"),
+    /mcp_servers\.cyberboss_tools\.tools\.whereabouts_snapshot\.approval_mode="auto"/
+  );
 });
 
 test("codex MCP elicitation approvals map to runtime approval events", () => {

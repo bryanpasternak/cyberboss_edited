@@ -11,6 +11,7 @@ const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
 const { buildWeixinHelpText } = require("./command-registry");
 const { CheckinConfigStore, parseCheckinRangeMinutes, resolveDefaultCheckinRange } = require("./checkin-config-store");
+const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("./default-targets");
 const { StreamDelivery } = require("./stream-delivery");
 const { ThreadStateStore } = require("./thread-state-store");
 const { DeferredSystemReplyStore } = require("./deferred-system-reply-store");
@@ -132,6 +133,9 @@ class CyberbossApp {
     console.log(`[cyberboss] syncBuffer=${syncBuffer ? "ready" : "empty"}`);
     console.log(`[cyberboss] runtimeEndpoint=${runtimeState.endpoint || runtimeState.command || "(spawn)"}`);
     console.log(`[cyberboss] runtimeModels=${runtimeState.models?.length || 0}`);
+    if (this.config.startWithLocationServer) {
+      await this.ensureLocationServerStarted();
+    }
     console.log("[cyberboss] bridge loop started; waiting for WeChat messages.");
     if (this.config.startWithCheckin) {
       console.log("[cyberboss] checkin: enabled");
@@ -141,6 +145,7 @@ class CyberbossApp {
     }
 
     const shutdown = createShutdownController(async () => {
+      await this.closeLocationServer();
       await this.runtimeAdapter.close();
     });
 
@@ -189,7 +194,79 @@ class CyberbossApp {
       }
     } finally {
       shutdown.dispose();
+      await this.closeLocationServer();
       await this.runtimeAdapter.close();
+    }
+  }
+
+  async ensureLocationServerStarted() {
+    if (!this.projectServices?.whereabouts) {
+      return null;
+    }
+    await this.projectServices.whereabouts.startServer({
+      onAccepted: (result) => this.handleLocationAccepted(result),
+    });
+    console.log(
+      `[cyberboss] locationServer=http://${this.config.locationHost}:${this.config.locationPort} store=${this.config.locationStoreFile}`
+    );
+    return this.projectServices.whereabouts.server || null;
+  }
+
+  async closeLocationServer() {
+    if (!this.projectServices?.whereabouts) {
+      return;
+    }
+    await this.projectServices.whereabouts.closeServer();
+  }
+
+  handleLocationAccepted(result) {
+    if (!this.activeAccountId) {
+      return;
+    }
+
+    const point = result?.appended?.point || null;
+    const movementEvent = result?.appended?.movementEvent || null;
+    const triggerText = buildLocationTriggerSystemText(point?.trigger);
+    if (!triggerText && !movementEvent) {
+      return;
+    }
+
+    const sessionStore = this.runtimeAdapter.getSessionStore();
+    const senderId = resolvePreferredSenderId({
+      config: this.config,
+      accountId: this.activeAccountId,
+      sessionStore,
+    });
+    const workspaceRoot = resolvePreferredWorkspaceRoot({
+      config: this.config,
+      accountId: this.activeAccountId,
+      senderId,
+      sessionStore,
+    });
+    if (!senderId || !workspaceRoot) {
+      return;
+    }
+
+    if (triggerText && point?.id) {
+      this.systemMessageQueue.enqueue({
+        id: `location-trigger:${point.id}`,
+        accountId: this.activeAccountId,
+        senderId,
+        workspaceRoot,
+        text: triggerText,
+        createdAt: normalizeIsoTime(point?.receivedAt) || normalizeIsoTime(point?.timestamp) || new Date().toISOString(),
+      });
+    }
+
+    if (movementEvent) {
+      this.systemMessageQueue.enqueue({
+        id: `location-move:${movementEvent.id}`,
+        accountId: this.activeAccountId,
+        senderId,
+        workspaceRoot,
+        text: buildLocationMovementSystemText(movementEvent),
+        createdAt: normalizeIsoTime(movementEvent?.movedAt) || new Date().toISOString(),
+      });
     }
   }
 
@@ -1797,6 +1874,18 @@ function normalizeThreadId(value) {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeIsoTime(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  const parsed = Date.parse(normalized);
+  if (!Number.isFinite(parsed)) {
+    return "";
+  }
+  return new Date(parsed).toISOString();
 }
 
 function matchesBuiltInCommandPrefix(commandTokens) {

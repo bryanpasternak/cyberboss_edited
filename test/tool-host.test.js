@@ -70,6 +70,40 @@ function createHost() {
           return { outputFile: "/tmp/shot.png", ...args };
         },
       },
+      whereabouts: {
+        getSnapshot(args) {
+          return {
+            currentStay: { address: "Office" },
+            recentStays: [{ address: "Home" }],
+            recentMovementEvents: [{ fromAddress: "Home", toAddress: "Office" }],
+            ...args,
+          };
+        },
+        getCurrentStayForOutput() {
+          return { address: "Office", enteredAtLocal: "2026-04-22 09:00:00" };
+        },
+        getRecentStaysForOutput(args) {
+          return {
+            currentStay: { address: "Office" },
+            recentStays: [{ address: "Home" }],
+            limit: args.limit,
+          };
+        },
+        getRecentMovesForOutput(args) {
+          return {
+            currentStay: { address: "Office" },
+            recentMovementEvents: [{ fromAddress: "Home", toAddress: "Office" }],
+            limit: args.limit,
+          };
+        },
+        appendPoint(args) {
+          return {
+            point: { id: "point-1", ...args },
+            currentStay: { address: "Office" },
+            movementEvent: null,
+          };
+        },
+      },
     },
     runtimeContextStore: {
       resolveActiveContext() {
@@ -133,6 +167,22 @@ test("tool host descriptions include schema summary for models that only surface
   assert.match(timelineWrite.description, /Input:/);
   assert.match(timelineWrite.description, /date: string/);
   assert.match(timelineWrite.description, /events: \{/);
+});
+
+test("tool host exposes whereabouts tools from the external dependency", async () => {
+  const host = createHost();
+  const tools = host.listTools();
+  const snapshotTool = tools.find((tool) => tool.name === "whereabouts_snapshot");
+  const currentStayResult = await host.invokeTool("whereabouts_current_stay", {}, {});
+  const snapshotResult = await host.invokeTool("whereabouts_snapshot", {
+    stayLimit: 3,
+    moveLimit: 2,
+  }, {});
+
+  assert.ok(snapshotTool);
+  assert.equal(currentStayResult.data.currentStay.address, "Office");
+  assert.equal(snapshotResult.data.currentStay.address, "Office");
+  assert.equal(snapshotResult.data.recentStays.length, 1);
 });
 
 test("tool host rejects timeline events without title or eventNodeId", async () => {

@@ -1,30 +1,40 @@
+const { WhereaboutsToolHost } = require("whereabouts-mcp");
+
 class ProjectToolHost {
   constructor({ services, runtimeContextStore }) {
     this.services = services;
     this.runtimeContextStore = runtimeContextStore;
+    this.extraToolHosts = createExtraToolHosts(services);
   }
 
   listTools() {
-    return PROJECT_TOOLS.map((tool) => ({
+    const builtIn = PROJECT_TOOLS.map((tool) => ({
       name: tool.name,
       description: buildToolDescription(tool),
       inputSchema: tool.inputSchema,
     }));
+    const extra = this.extraToolHosts.flatMap((host) => host.listTools());
+    return [...builtIn, ...extra];
   }
 
   async invokeTool(toolName, args = {}, context = {}) {
     const spec = PROJECT_TOOLS.find((candidate) => candidate.name === toolName);
-    if (!spec) {
-      throw new Error(`Unknown tool: ${toolName}`);
-    }
     const normalizedArgs = args && typeof args === "object" ? args : {};
-    validateSchema(spec.inputSchema, normalizedArgs, toolName, "input");
-    const resolvedContext = this.resolveContext(context);
-    return await spec.handler({
-      services: this.services,
-      args: normalizedArgs,
-      context: resolvedContext,
-    });
+    if (spec) {
+      validateSchema(spec.inputSchema, normalizedArgs, toolName, "input");
+      const resolvedContext = this.resolveContext(context);
+      return await spec.handler({
+        services: this.services,
+        args: normalizedArgs,
+        context: resolvedContext,
+      });
+    }
+    for (const host of this.extraToolHosts) {
+      if (host.listTools().some((tool) => tool.name === toolName)) {
+        return await host.invokeTool(toolName, normalizedArgs);
+      }
+    }
+    throw new Error(`Unknown tool: ${toolName}`);
   }
 
   resolveContext(context = {}) {
@@ -46,7 +56,10 @@ class ProjectToolHost {
 }
 
 function listProjectToolNames() {
-  return PROJECT_TOOLS.map((tool) => tool.name);
+  return [
+    ...PROJECT_TOOLS.map((tool) => tool.name),
+    ...STATIC_EXTRA_TOOL_NAMES,
+  ];
 }
 
 const PROJECT_TOOLS = [
@@ -355,6 +368,18 @@ const PROJECT_TOOLS = [
     },
   },
 ];
+
+const STATIC_EXTRA_TOOL_NAMES = new WhereaboutsToolHost({ service: null })
+  .listTools()
+  .map((tool) => tool.name);
+
+function createExtraToolHosts(services = {}) {
+  const hosts = [];
+  if (services.whereabouts) {
+    hosts.push(new WhereaboutsToolHost({ service: services.whereabouts }));
+  }
+  return hosts;
+}
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";

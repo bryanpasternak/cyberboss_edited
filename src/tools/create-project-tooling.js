@@ -8,6 +8,7 @@ const { SystemMessageService } = require("../services/system-message-service");
 const { TimelineService } = require("../services/timeline-service");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
+const { WhereaboutsService } = require("whereabouts-mcp");
 
 function createProjectTooling(config, options = {}) {
   const sessionStore = options.sessionStore || new SessionStore({
@@ -25,6 +26,20 @@ function createProjectTooling(config, options = {}) {
     system: new SystemMessageService({ config, sessionStore }),
     channelFile: new ChannelFileService({ config, channelAdapter, sessionStore }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),
+    whereabouts: new WhereaboutsService({
+      config: {
+        storeFile: config.locationStoreFile,
+        host: config.locationHost,
+        port: config.locationPort,
+        token: config.locationToken,
+        historyLimit: config.locationHistoryLimit,
+        movementEventLimit: config.locationMovementEventLimit,
+        stayMergeRadiusMeters: config.locationStayMergeRadiusMeters,
+        stayBreakConfirmRadiusMeters: config.locationStayBreakConfirmRadiusMeters,
+        stayBreakConfirmSamples: config.locationStayBreakConfirmSamples,
+        majorMoveThresholdMeters: config.locationMajorMoveThresholdMeters,
+      },
+    }),
   };
   const toolHost = new ProjectToolHost({
     services,
