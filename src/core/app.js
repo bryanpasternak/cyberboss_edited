@@ -29,7 +29,6 @@ const {
 } = require("../adapters/runtime/shared/approval-command");
 const { runSystemCheckinPoller } = require("../app/system-checkin-poller");
 const { createProjectTooling } = require("../tools/create-project-tooling");
-const { buildProjectToolGuide } = require("../tools/tool-host");
 
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
@@ -194,11 +193,35 @@ class CyberbossApp {
     }
   }
 
-  async sendTimelineScreenshot({ senderId = "", args = [], outputFile = "" } = {}) {
+  async sendTimelineScreenshot({
+    senderId = "",
+    outputFile = "",
+    selector = "",
+    range = "",
+    date = "",
+    week = "",
+    month = "",
+    category = "",
+    subcategory = "",
+    width = 0,
+    height = 0,
+    sidePadding = undefined,
+    locale = "",
+  } = {}) {
     return this.projectServices.timeline.queueScreenshot({
       userId: senderId,
       outputFile,
-      args,
+      selector,
+      range,
+      date,
+      week,
+      month,
+      category,
+      subcategory,
+      width,
+      height,
+      sidePadding,
+      locale,
     }, {});
   }
 
@@ -613,10 +636,23 @@ class CyberbossApp {
     const pendingJobs = this.timelineScreenshotQueue.drainForAccount(account.accountId);
     for (const job of pendingJobs) {
       try {
-        await this.sendTimelineScreenshot({
-          senderId: job.senderId,
-          args: job.args,
+        const captured = await this.projectServices.timeline.captureScreenshot({
           outputFile: job.outputFile,
+          selector: job.selector,
+          range: job.range,
+          date: job.date,
+          week: job.week,
+          month: job.month,
+          category: job.category,
+          subcategory: job.subcategory,
+          width: job.width,
+          height: job.height,
+          sidePadding: job.sidePadding,
+          locale: job.locale,
+        });
+        await this.sendLocalFileToCurrentChat({
+          senderId: job.senderId,
+          filePath: captured.outputFile,
         });
       } catch (error) {
         const messageText = error instanceof Error ? error.message : String(error || "unknown error");
@@ -1127,34 +1163,46 @@ class CyberbossApp {
     const threadId = this.runtimeAdapter.getSessionStore().getThreadIdForWorkspace(bindingKey, workspaceRoot);
     const threadState = threadId ? this.threadStateStore.getThreadState(threadId) : null;
     const approval = threadState?.pendingApproval || null;
-    if (!threadId || approval?.requestId == null || String(approval.requestId).trim() === "") {
+  if (!threadId || approval?.requestId == null || String(approval.requestId).trim() === "") {
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: "💡 There is no pending approval request right now.",
+      contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    if (approval?.kind === "mcp_tool_call" && command.name === "always") {
       await this.channelAdapter.sendText({
         userId: normalized.senderId,
-        text: "💡 There is no pending approval request right now.",
+        text: "⚠️ Persistent approval for this Codex MCP tool request is not available from WeChat.",
         contextToken: normalized.contextToken,
       });
       return;
     }
 
-    const decision = command.name === "no" ? "decline" : "accept";
+    const approvalResponse = buildApprovalResponsePayload(approval, command.name);
+    if (!approvalResponse) {
+      await this.channelAdapter.sendText({
+        userId: normalized.senderId,
+        text: "⚠️ This Codex MCP request cannot be answered from WeChat yet.",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
     console.log(
-      `[cyberboss] approval response requested thread=${threadId} requestId=${approval.requestId} decision=${decision} workspace=${workspaceRoot}`
+      `[cyberboss] approval response requested thread=${threadId} requestId=${approval.requestId} mode=${approvalResponse.result ? "result" : "decision"} workspace=${workspaceRoot}`
     );
-    await this.runtimeAdapter.respondApproval({
-      requestId: approval.requestId,
-      decision,
-    });
+    await this.runtimeAdapter.respondApproval(approvalResponse);
     this.runtimeAdapter.getSessionStore().clearApprovalPrompt(threadId);
     console.log(
-      `[cyberboss] approval response delivered thread=${threadId} requestId=${approval.requestId} decision=${decision}`
+      `[cyberboss] approval response delivered thread=${threadId} requestId=${approval.requestId}`
     );
-    if (command.name === "always" && decision === "accept") {
+    if (command.name === "always" && approvalResponse.decision === "accept") {
       this.runtimeAdapter.getSessionStore().rememberApprovalPrefixForWorkspace(workspaceRoot, approval.commandTokens);
     }
     this.threadStateStore.resolveApproval(threadId, "running");
-    const text = command.name === "always"
-      ? "💡 Auto-approve enabled for this command prefix in the current workspace."
-      : (command.name === "yes" ? "✅ This request has been approved." : "❌ This request has been denied.");
+    const text = buildApprovalResponseText(approval, command.name, approvalResponse);
     await this.channelAdapter.sendText({
       userId: normalized.senderId,
       text,
@@ -1347,10 +1395,16 @@ class CyberbossApp {
       });
       return;
     }
-    await this.runtimeAdapter.respondApproval({
-      requestId: event.payload.requestId,
-      decision: "accept",
-    }).catch(() => {});
+    const approvalResponse = buildApprovalResponsePayload(event.payload, "yes");
+    if (!approvalResponse) {
+      sessionStore.clearApprovalPrompt(event.payload.threadId);
+      await this.sendApprovalPrompt({
+        bindingKey: linked.bindingKey,
+        approval: event.payload,
+      }).catch(() => {});
+      return;
+    }
+    await this.runtimeAdapter.respondApproval(approvalResponse).catch(() => {});
     this.threadStateStore.resolveApproval(event.payload.threadId, "running");
   }
 
@@ -1755,6 +1809,10 @@ function matchesBuiltInCommandPrefix(commandTokens) {
     return true;
   }
 
+   if (normalized[0] === "mcp_tool" && normalized[1] === "cyberboss_tools") {
+    return true;
+  }
+
   return false;
 }
 
@@ -1763,26 +1821,30 @@ function normalizeCommandTokensForMatching(commandTokens) {
 }
 
 function buildApprovalPromptText(approval) {
+  if (approval?.kind === "mcp_elicitation") {
+    return buildElicitationApprovalPromptText(approval);
+  }
   const reasonText = normalizeText(approval?.reason);
   const commandText = normalizeText(approval?.command);
   const toolName = extractToolNameFromReason(reasonText) || "";
+  const commandLines = commandText ? commandText.split("\n") : [];
+  const firstCommandLine = normalizeText(commandLines[0]);
+  const restCommandLines = commandLines.slice(1);
+  const shouldShowReason = reasonText && normalizeText(reasonText) !== normalizeText(`Tool: ${firstCommandLine}`);
 
   const out = [];
   out.push(`🔐 【Approval】${toolName || "Tool request"}`);
 
-  if (reasonText && reasonText !== commandText) {
+  if (shouldShowReason) {
     out.push(`📋 ${reasonText}`);
   }
 
   if (commandText) {
-    const lines = commandText.split("\n");
-    const first = lines[0] || "";
-    const rest = lines.slice(1);
-    if (first) {
-      out.push(`⌨️ ${first}`);
+    if (firstCommandLine) {
+      out.push(`⌨️ ${firstCommandLine}`);
     }
-    if (rest.length) {
-      out.push(rest.map((line) => `  ${line}`).join("\n"));
+    if (restCommandLines.length) {
+      out.push(restCommandLines.map((line) => `  ${line}`).join("\n"));
     }
   }
 
@@ -1815,10 +1877,89 @@ function buildApprovalPromptSignature(approval) {
     ? approval.commandTokens.map((token) => normalizeCommandArgument(token)).filter(Boolean)
     : [];
   return JSON.stringify({
+    kind: normalizeText(approval?.kind),
     reason: reasonText,
     command: commandText,
     commandTokens,
+    responseTemplate: approval?.responseTemplate || null,
   });
+}
+
+function buildApprovalResponsePayload(approval, commandName) {
+  const requestId = approval?.requestId;
+  if (requestId == null || String(requestId).trim() === "") {
+    return null;
+  }
+  if (approval?.kind === "mcp_tool_call" || approval?.kind === "mcp_elicitation") {
+    const responseByCommand = approval?.responseTemplate?.responseByCommand;
+    const result = responseByCommand && typeof responseByCommand === "object"
+      ? responseByCommand[commandName]
+      : null;
+    if (!result || typeof result !== "object") {
+      return null;
+    }
+    return { requestId, result };
+  }
+  const decision = commandName === "no" ? "decline" : "accept";
+  return { requestId, decision };
+}
+
+function buildApprovalResponseText(approval, commandName, approvalResponse) {
+  if (approval?.kind === "mcp_tool_call" || approval?.kind === "mcp_elicitation") {
+    if (commandName === "yes") {
+      return "✅ This request has been approved.";
+    }
+    return "❌ This request has been cancelled.";
+  }
+  return commandName === "always"
+    ? "💡 Auto-approve enabled for this command prefix in the current workspace."
+    : (commandName === "yes" ? "✅ This request has been approved." : "❌ This request has been denied.");
+}
+
+function buildElicitationApprovalPromptText(approval) {
+  const elicitation = approval?.elicitation || {};
+  const messageText = normalizeText(elicitation?.message);
+  const commandText = normalizeText(approval?.command);
+  const approvalKind = normalizeText(elicitation?.approvalKind);
+  const out = [];
+  out.push(`🔐 【Approval】${normalizeText(approval?.reason) || "MCP request"}`);
+  if (messageText) {
+    out.push(`📋 ${messageText.split("\n")[0]}`);
+  }
+  if (commandText) {
+    const commandLines = commandText.split("\n").map((line) => normalizeText(line)).filter(Boolean);
+    if (commandLines.length) {
+      out.push(`⌨️ ${commandLines[0]}`);
+      if (commandLines.length > 1) {
+        out.push(commandLines.slice(1).map((line) => `  ${line}`).join("\n"));
+      }
+    }
+  }
+
+  const toolDescription = normalizeText(elicitation?.toolDescription);
+  if (toolDescription && approvalKind === "mcp_tool_call") {
+    out.push("━━━━━━━━━━━━━");
+    out.push(`🧾 ${toolDescription}`);
+  }
+
+  const supportedCommands = new Set(
+    Array.isArray(approval?.responseTemplate?.supportedCommands)
+      ? approval.responseTemplate.supportedCommands
+      : []
+  );
+  out.push("━━━━━━━━━━━━━");
+  out.push("💬 Reply with:");
+  if (supportedCommands.has("yes")) {
+    out.push("👉 /yes    allow once");
+  }
+  if (supportedCommands.has("no")) {
+    out.push("👉 /no     cancel this request");
+  }
+  if (!supportedCommands.size) {
+    out.push("⚠️ This Codex MCP request cannot be answered from WeChat yet.");
+  }
+
+  return out.join("\n");
 }
 
 function buildReminderSystemTrigger(reminder, config = {}) {
@@ -1878,7 +2019,6 @@ function buildInboundText(normalized, persisted = {}, config = {}, options = {})
   const failed = Array.isArray(persisted?.failed) ? persisted.failed : [];
   const userName = String(config?.userName || "").trim() || "the user";
   const runtimeId = normalizeText(options?.runtimeId).toLowerCase();
-  const commandGuide = buildIncomingCommandGuide(normalized, persisted);
   const localTime = formatWechatLocalTime(normalized?.receivedAt);
   const lines = [];
   if (localTime) {
@@ -1903,12 +2043,11 @@ function buildInboundText(normalized, persisted = {}, config = {}, options = {})
     lines.push(`You must read these files before replying to ${userName}.`);
     if (saved.some((item) => isImageAttachmentItem(item))) {
       if (runtimeUsesReadForImages(runtimeId)) {
-        lines.push("For images, use `Read` on the saved local image file. Do not use shell commands or wrappers.");
+        lines.push("For images, use `Read` on the saved local image file.");
       } else {
-        lines.push("For images, use `view_image`. Do not use `Read` or shell commands on image files.");
+        lines.push("For images, use `view_image`.");
       }
     }
-    lines.push("For Cyberboss capabilities, use project tools instead of shell commands or local CLI wrappers.");
     lines.push(`If a required tool is missing, tell ${userName} exactly what is missing and that you cannot read the file yet.`);
   }
 
@@ -1921,13 +2060,6 @@ function buildInboundText(normalized, persisted = {}, config = {}, options = {})
       const label = item.sourceFileName || item.kind || "attachment";
       lines.push(`- ${label}: ${item.reason}`);
     }
-  }
-
-  if (commandGuide) {
-    if (lines.length) {
-      lines.push("");
-    }
-    lines.push(commandGuide);
   }
 
   return lines.join("\n").trim();
@@ -2017,38 +2149,6 @@ function parseMessageIdForOrdering(value) {
 function parseNumericOrderValue(value) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function buildIncomingCommandGuide(normalized, persisted = {}) {
-  const topics = detectCommandTopics(normalized, persisted);
-  if (!topics.length) {
-    return "";
-  }
-  return buildProjectToolGuide(topics);
-}
-
-function detectCommandTopics(normalized, persisted = {}) {
-  const topics = new Set();
-  const text = String(normalized?.text || "").toLowerCase();
-  const saved = Array.isArray(persisted?.saved) ? persisted.saved : [];
-
-  if (/(timeline|时间轴|截图|screenshot|dashboard)/u.test(text)) {
-    topics.add("timeline");
-  }
-  if (/(reminder|提醒|稍后|过会|回头|记得|delay|follow up)/u.test(text)) {
-    topics.add("reminder");
-  }
-  if (/(diary|日记|记录一下|写下来|记一笔)/u.test(text)) {
-    topics.add("diary");
-  }
-  if (/(send-file|send file|发文件|发给我|发回|附件)/u.test(text)) {
-    topics.add("channel");
-  }
-  if (saved.length && /(send|发|回传|返回)/u.test(text)) {
-    topics.add("channel");
-  }
-
-  return Array.from(topics);
 }
 
 const DEFERRED_REPLY_NOTICE = "由于微信 context_token 的限制，上轮对话里有一部分内容当时没能送达；这次用户再次发来消息、context_token 刷新后，先把遗留内容补上。如果这种情况反复出现，可发送 /chunk <数字>（例如 /chunk 50）调大最小合并字符数，减少消息分片。";

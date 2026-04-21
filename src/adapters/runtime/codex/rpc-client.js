@@ -1,6 +1,7 @@
 const { spawn } = require("child_process");
 const os = require("os");
 const WebSocket = require("ws");
+const { buildCodexMcpConfigArgs } = require("./mcp-config");
 
 const IS_WINDOWS = os.platform() === "win32";
 const DEFAULT_CODEX_COMMAND = "codex";
@@ -29,7 +30,17 @@ class CodexRpcClient {
 
   async connect() {
     if (this.mode === "websocket") {
+      if (this.socket && this.socket.readyState === WebSocket.OPEN) {
+        return;
+      }
+      if (this.socket && this.socket.readyState === WebSocket.CONNECTING) {
+        return await waitForSocketOpen(this.socket);
+      }
+      this.socket = null;
       await this.connectWebSocket();
+      return;
+    }
+    if (this.child && !this.child.killed) {
       return;
     }
     await this.connectSpawn();
@@ -97,8 +108,18 @@ class CodexRpcClient {
       });
       socket.on("close", () => {
         this.isReady = false;
+        if (this.socket === socket) {
+          this.socket = null;
+        }
       });
     });
+  }
+
+  isTransportReady() {
+    if (this.mode === "websocket") {
+      return !!this.socket && this.socket.readyState === WebSocket.OPEN;
+    }
+    return !!this.child && !this.child.killed;
   }
 
   onMessage(listener) {
@@ -171,21 +192,9 @@ class CodexRpcClient {
     const normalizedThreadId = normalizeNonEmptyString(threadId);
     const normalizedTurnId = normalizeNonEmptyString(turnId);
     if (!normalizedThreadId || !normalizedTurnId) {
-      throw new Error("turn/cancel requires threadId and turnId");
+      throw new Error("turn/interrupt requires threadId and turnId");
     }
-    return this.sendRequest("turn/cancel", {
-      threadId: normalizedThreadId,
-      turnId: normalizedTurnId,
-    });
-  }
-
-  async cancelTurn({ threadId, turnId }) {
-    const normalizedThreadId = normalizeNonEmptyString(threadId);
-    const normalizedTurnId = normalizeNonEmptyString(turnId);
-    if (!normalizedThreadId || !normalizedTurnId) {
-      throw new Error("turn/cancel requires threadId and turnId");
-    }
-    return this.sendRequest("turn/cancel", {
+    return this.sendRequest("turn/interrupt", {
       threadId: normalizedThreadId,
       turnId: normalizedTurnId,
     });
@@ -308,31 +317,7 @@ function buildSpawnSpec(command, mcpServerConfig = null) {
 }
 
 function buildCodexConfigArgs(mcpServerConfig) {
-  if (!mcpServerConfig || typeof mcpServerConfig !== "object") {
-    return [];
-  }
-  const name = normalizeNonEmptyString(mcpServerConfig.name) || "cyberboss_tools";
-  const command = normalizeNonEmptyString(mcpServerConfig.command);
-  const args = Array.isArray(mcpServerConfig.args)
-    ? mcpServerConfig.args.map((value) => normalizeNonEmptyString(value)).filter(Boolean)
-    : [];
-  if (!command) {
-    return [];
-  }
-  return [
-    "-c",
-    `mcp_servers.${name}.command=${quoteTomlString(command)}`,
-    "-c",
-    `mcp_servers.${name}.args=${formatTomlArray(args)}`,
-  ];
-}
-
-function quoteTomlString(value) {
-  return JSON.stringify(String(value ?? ""));
-}
-
-function formatTomlArray(values) {
-  return `[${values.map((value) => quoteTomlString(value)).join(",")}]`;
+  return buildCodexMcpConfigArgs(mcpServerConfig);
 }
 
 function normalizeNonEmptyString(value) {
@@ -425,6 +410,39 @@ function normalizeWritableRoots(values) {
     roots.push(normalized);
   }
   return roots;
+}
+
+function waitForSocketOpen(socket) {
+  return new Promise((resolve, reject) => {
+    if (!socket) {
+      reject(new Error("Codex websocket is not connected"));
+      return;
+    }
+    if (socket.readyState === WebSocket.OPEN) {
+      resolve();
+      return;
+    }
+    const cleanup = () => {
+      socket.off("open", onOpen);
+      socket.off("error", onError);
+      socket.off("close", onClose);
+    };
+    const onOpen = () => {
+      cleanup();
+      resolve();
+    };
+    const onError = (error) => {
+      cleanup();
+      reject(error);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new Error("Codex websocket is not connected"));
+    };
+    socket.on("open", onOpen);
+    socket.on("error", onError);
+    socket.on("close", onClose);
+  });
 }
 
 module.exports = { CodexRpcClient };

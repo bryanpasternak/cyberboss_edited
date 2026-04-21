@@ -67,8 +67,7 @@ test("image attachments inject view_image instructions for runtimes that support
     }, "/workspace");
 
     assert.match(prepared.text, /For images, use `view_image`/i);
-    assert.match(prepared.text, /Do not use `Read` or shell commands on image files/i);
-    assert.match(prepared.text, /use project tools instead of shell commands/i);
+    assert.doesNotMatch(prepared.text, /Do not use `Read` or shell commands on image files/i);
     assert.equal(prepared.attachments[0].contentType, "image/jpeg");
     assert.equal(prepared.attachments[0].isImage, true);
   } finally {
@@ -122,8 +121,7 @@ test("image attachments tell claudecode to use Read on the saved local image fil
 
     assert.match(prepared.text, /You must read these files before replying to User/i);
     assert.match(prepared.text, /For images, use `Read` on the saved local image file/i);
-    assert.match(prepared.text, /Do not use shell commands or wrappers/i);
-    assert.match(prepared.text, /use project tools instead of shell commands/i);
+    assert.doesNotMatch(prepared.text, /Do not use shell commands or wrappers/i);
     assert.doesNotMatch(prepared.text, /view_image/i);
     assert.equal(prepared.attachments[0].contentType, "image/jpeg");
     assert.equal(prepared.attachments[0].isImage, true);

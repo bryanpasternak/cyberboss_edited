@@ -45,8 +45,6 @@ function loadWechatInstructions(config = {}) {
   if (operations) {
     sections.push(operations);
   }
-  sections.push("Cyberboss project tools are the stable way to write diary entries, create reminders, update timeline, capture screenshots, and send files.");
-  sections.push("Use project tools for Cyberboss capabilities instead of shell commands or local CLI wrappers.");
   return sections.join("\n\n").trim();
 }
 

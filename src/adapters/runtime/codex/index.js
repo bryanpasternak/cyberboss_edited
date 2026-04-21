@@ -1,5 +1,3 @@
-const path = require("path");
-const fs = require("fs");
 const { CodexRpcClient } = require("./rpc-client");
 const { buildOpeningTurnText, buildInstructionRefreshText } = require("../shared-instructions");
 const { mapCodexMessageToRuntimeEvent } = require("./events");
@@ -13,6 +11,7 @@ const {
   isAssistantItemCompleted,
 } = require("./message-utils");
 const { SessionStore } = require("./session-store");
+const { resolveCodexProjectToolMcpServerConfig } = require("./mcp-config");
 
 function createCodexRuntimeAdapter(config) {
   const sessionStore = new SessionStore({ filePath: config.sessionsFile, runtimeId: "codex" });
@@ -60,10 +59,10 @@ function createCodexRuntimeAdapter(config) {
       return sessionStore;
     },
     async initialize() {
-      if (readyState) {
+      const runtimeClient = ensureClient();
+      if (readyState && runtimeClient.isReady && runtimeClient.isTransportReady()) {
         return readyState;
       }
-      const runtimeClient = ensureClient();
       await runtimeClient.connect();
       await runtimeClient.initialize();
       const modelResponse = await runtimeClient.listModels().catch(() => null);
@@ -89,17 +88,21 @@ function createCodexRuntimeAdapter(config) {
     async startFreshThreadDraft() {
       return {};
     },
-    async respondApproval({ requestId, decision }) {
+    async respondApproval({ requestId, decision, result = null }) {
       const runtimeClient = ensureClient();
       await this.initialize();
-      const normalizedDecision = decision === "accept" ? "accept" : "decline";
       if (requestId == null || String(requestId).trim() === "") {
         throw new Error("approval response requires a requestId");
       }
-      await runtimeClient.sendResponse(requestId, { decision: normalizedDecision });
+      const responsePayload = result && typeof result === "object"
+        ? result
+        : { decision: decision === "accept" ? "accept" : "decline" };
+      await runtimeClient.sendResponse(requestId, responsePayload);
       return {
         requestId,
-        decision: normalizedDecision,
+        ...(result && typeof result === "object"
+          ? { result: responsePayload }
+          : { decision: responsePayload.decision }),
       };
     },
     async cancelTurn({ threadId, turnId }) {
@@ -175,19 +178,6 @@ function createCodexRuntimeAdapter(config) {
 }
 
 module.exports = { createCodexRuntimeAdapter };
-
-function resolveCodexProjectToolMcpServerConfig() {
-  const home = process.env.CYBERBOSS_HOME || path.resolve(__dirname, "..", "..", "..");
-  const scriptPath = path.join(home, "bin", "cyberboss.js");
-  if (!fs.existsSync(scriptPath)) {
-    return null;
-  }
-  return {
-    name: "cyberboss_tools",
-    command: process.execPath,
-    args: [scriptPath, "tool-mcp-server", "--runtime-id", "codex"],
-  };
-}
 
 function waitForTurnCompletion(client, threadId) {
   return new Promise((resolve, reject) => {

@@ -30,7 +30,7 @@
 
 Cyberboss is not another polite productivity timer. It is not a to-do list with better branding either.
 
-It is an agent bridge that plugs a local coding runtime directly into WeChat and turns it into a time-aware, context-persistent accountability companion. It currently supports Codex and Claude Code while keeping the same commands and day-to-day behavior. It does not wait for you to "start a session". It watches the flow of your day, notices when you disappear, and decides when to show up again.
+It is an agent bridge that plugs a local coding runtime directly into WeChat and turns it into a time-aware, context-persistent accountability companion. It supports Codex and Claude Code while keeping the same commands and day-to-day behavior. It does not wait for you to "start a session". It watches the flow of your day, notices when you disappear, and decides when to show up again.
 
 ## Why Cyberboss?
 
@@ -39,7 +39,7 @@ For people with ADHD, or anyone who needs strong external accountability, most p
 Cyberboss starts from a transfer of control.
 
 - No manual start button
-  It already lives inside the chat interface you actually open every day.
+  It lives inside the chat interface you actually open every day.
 - Inescapable sense of time
   It sees when you replied, when you vanished, and how long a promise stayed unresolved.
 - Real external feedback
@@ -189,6 +189,8 @@ If you want the strongest "push" effect, do not immediately rewrite the persona 
 
 If you plan to use shared mode, set `CYBERBOSS_WORKSPACE_ROOT` before the first start so `shared:open` resolves the right thread for the right project.
 
+When `CYBERBOSS_RUNTIME=claudecode`, Cyberboss also upserts a workspace-local `.mcp.json` entry for `cyberboss_tools` before starting Claude, and launches Claude with that MCP config explicitly attached. That is how Claude discovers the Cyberboss project tools without any global registration.
+
 ### Terminal commands for end users
 
 - `npm run login`
@@ -198,7 +200,7 @@ If you plan to use shared mode, set `CYBERBOSS_WORKSPACE_ROOT` before the first 
 - `npm run shared:start`
   Default startup path. Starts the shared runtime bridge and the shared WeChat bridge
 - `npm run shared:open`
-  Default attach path. Opens the currently bound shared thread in your terminal
+  Default attach path. Opens the bound shared thread in your terminal
 - `npm run shared:status`
   Check the shared runtime process, shared bridge, and `readyz`
 - `npm run doctor`
@@ -247,7 +249,7 @@ Switch the runtime with `CYBERBOSS_RUNTIME`. You do not need a different command
 - `/help`
   Show WeChat command help
 
-Plain text messages go directly to the currently bound thread. If nothing is bound yet, bind a workspace first:
+Plain text messages go directly to the bound thread. If nothing is bound yet, bind a workspace first:
 
 ```text
 /bind /absolute/path
@@ -279,7 +281,7 @@ Notes:
 
 - Shared mode is the default mode in this README
 - The same WeChat commands and day-to-day behavior apply under both Codex and Claude Code
-- If `CYBERBOSS_RUNTIME=claudecode`, the local Claude window currently works best as a listener for the shared thread
+- If `CYBERBOSS_RUNTIME=claudecode`, the local Claude window works best as a listener for the shared thread
 - Do not let WeChat attach to a private spawned runtime if you expect terminal and WeChat to watch the same thread
 - Do not keep multiple `cyberboss` bridge processes alive at the same time
 - Do not put `npm run shared:start` in the background; it is the main shared bridge process
@@ -329,7 +331,7 @@ This is the runtime state directory, not your project workspace. The WeChat thre
 <a id="agent-guide"></a>
 ## Agent Guide
 
-Agent-facing Cyberboss capabilities are now project-native structured tools instead of local capability CLI commands.
+Agent-facing Cyberboss capabilities are project-native structured tools.
 
 ### Common project tools
 
@@ -345,7 +347,7 @@ Agent-facing Cyberboss capabilities are now project-native structured tools inst
 
 ### Agent conventions
 
-- Use Cyberboss project tools for diary, reminder, timeline, screenshot, and file-send operations instead of shell commands or local CLI wrappers
+- Use Cyberboss project tools for diary, reminder, timeline, screenshot, and file-send operations
 - Prefer documented lifecycle entrypoints from this README, `--help`, and [docs/commands.md](./docs/commands.md) for human terminal usage
 - On first failure, report the concrete error before reading source code
 

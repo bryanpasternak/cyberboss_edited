@@ -1,7 +1,7 @@
 const { spawn } = require("child_process");
 
 class ClaudeCodeProcessClient {
-  constructor({ command = "claude", cwd, env, model = "", permissionMode = "default", disableVerbose = false, extraArgs = [], pluginDirs = [], ipcServer = null, workspaceRoot = "" }) {
+  constructor({ command = "claude", cwd, env, model = "", permissionMode = "default", disableVerbose = false, extraArgs = [], mcpConfigPaths = [], ipcServer = null, workspaceRoot = "" }) {
     this.command = command;
     this.cwd = cwd;
     this.env = env;
@@ -9,7 +9,7 @@ class ClaudeCodeProcessClient {
     this.permissionMode = permissionMode;
     this.disableVerbose = disableVerbose;
     this.extraArgs = extraArgs;
-    this.pluginDirs = pluginDirs;
+    this.mcpConfigPaths = mcpConfigPaths;
     this.ipcServer = ipcServer;
     this.workspaceRoot = workspaceRoot;
     this.child = null;
@@ -52,9 +52,15 @@ class ClaudeCodeProcessClient {
       permissionMode: this.permissionMode,
       disableVerbose: this.disableVerbose,
       extraArgs: this.extraArgs,
-      pluginDirs: this.pluginDirs,
+      mcpConfigPaths: this.mcpConfigPaths,
       resumeSessionId,
     });
+    const mcpLabel = this.mcpConfigPaths.length
+      ? this.mcpConfigPaths.join(",")
+      : "(none)";
+    console.log(
+      `[claudecode-runtime] launching command=${this.command} cwd=${this.cwd} mcp_config=${mcpLabel}`
+    );
     const child = spawn(this.command, args, {
       cwd: this.cwd,
       env: this.env,
@@ -349,7 +355,7 @@ class ClaudeCodeProcessClient {
   }
 }
 
-function buildArgs({ model, permissionMode, disableVerbose, extraArgs, pluginDirs, resumeSessionId }) {
+function buildArgs({ model, permissionMode, disableVerbose, extraArgs, mcpConfigPaths, resumeSessionId }) {
   const args = [
     "--output-format", "stream-json",
     "--input-format", "stream-json",
@@ -367,10 +373,10 @@ function buildArgs({ model, permissionMode, disableVerbose, extraArgs, pluginDir
   if (model) {
     args.push("--model", model);
   }
-  if (Array.isArray(pluginDirs)) {
-    for (const pluginDir of pluginDirs) {
-      if (typeof pluginDir === "string" && pluginDir.trim()) {
-        args.push("--plugin-dir", pluginDir.trim());
+  if (Array.isArray(mcpConfigPaths)) {
+    for (const configPath of mcpConfigPaths) {
+      if (typeof configPath === "string" && configPath.trim()) {
+        args.push("--mcp-config", configPath.trim());
       }
     }
   }

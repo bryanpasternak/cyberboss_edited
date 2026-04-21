@@ -7,7 +7,7 @@ class ProjectToolHost {
   listTools() {
     return PROJECT_TOOLS.map((tool) => ({
       name: tool.name,
-      description: tool.description,
+      description: buildToolDescription(tool),
       inputSchema: tool.inputSchema,
     }));
   }
@@ -17,10 +17,12 @@ class ProjectToolHost {
     if (!spec) {
       throw new Error(`Unknown tool: ${toolName}`);
     }
+    const normalizedArgs = args && typeof args === "object" ? args : {};
+    validateSchema(spec.inputSchema, normalizedArgs, toolName, "input");
     const resolvedContext = this.resolveContext(context);
     return await spec.handler({
       services: this.services,
-      args: args && typeof args === "object" ? args : {},
+      args: normalizedArgs,
       context: resolvedContext,
     });
   }
@@ -43,47 +45,24 @@ class ProjectToolHost {
   }
 }
 
-function buildProjectToolGuide(topics = []) {
-  const normalizedTopics = Array.from(new Set(
-    (Array.isArray(topics) ? topics : [])
-      .map((value) => normalizeText(value).toLowerCase())
-      .filter(Boolean)
-  ));
-  if (!normalizedTopics.length) {
-    return "";
-  }
-
-  const lines = [
-    "Cyberboss project tools are available for timeline, reminders, diary, screenshots, and WeChat file sending.",
-    "Use project tools instead of shell commands or local CLI wrappers for these operations.",
-  ];
-  const mentioned = new Set();
-  for (const topic of normalizedTopics) {
-    for (const tool of PROJECT_TOOLS) {
-      if (!tool.topics.includes(topic) || mentioned.has(tool.name)) {
-        continue;
-      }
-      mentioned.add(tool.name);
-      lines.push(`- ${tool.name}: ${tool.shortHint}`);
-    }
-  }
-  return lines.join("\n");
+function listProjectToolNames() {
+  return PROJECT_TOOLS.map((tool) => tool.name);
 }
 
 const PROJECT_TOOLS = [
   {
     name: "cyberboss_diary_append",
-    description: "Append a diary entry into Cyberboss local diary storage without using shell commands.",
-    shortHint: "Append a diary entry with text or a text file.",
+    description: "Append a diary entry into Cyberboss local diary storage.",
+    shortHint: "Append a diary entry with direct text content.",
     topics: ["diary"],
     inputSchema: {
       type: "object",
+      required: ["text"],
       properties: {
-        text: { type: "string" },
-        textFile: { type: "string" },
-        title: { type: "string" },
-        date: { type: "string" },
-        time: { type: "string" },
+        text: { type: "string", description: "Diary body to append." },
+        title: { type: "string", description: "Optional short entry title." },
+        date: { type: "string", description: "Optional date in YYYY-MM-DD." },
+        time: { type: "string", description: "Optional time in HH:mm." },
       },
       additionalProperties: false,
     },
@@ -97,17 +76,17 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_reminder_create",
-    description: "Create a reminder in Cyberboss without using shell commands.",
-    shortHint: "Create a reminder with delay or absolute time.",
+    description: "Create a reminder in Cyberboss.",
+    shortHint: "Create a reminder with direct text plus delayMinutes or dueAt.",
     topics: ["reminder"],
     inputSchema: {
       type: "object",
+      required: ["text"],
       properties: {
-        delay: { type: "string" },
-        at: { type: "string" },
-        text: { type: "string" },
-        textFile: { type: "string" },
-        userId: { type: "string" },
+        text: { type: "string", description: "Reminder text to send back later." },
+        delayMinutes: { type: "integer", description: "Minutes from now before the reminder fires." },
+        dueAt: { type: "string", description: "Absolute time such as 2026-04-07T21:30+08:00." },
+        userId: { type: "string", description: "Optional explicit WeChat user id." },
       },
       additionalProperties: false,
     },
@@ -166,20 +145,46 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_timeline_write",
-    description: "Write timeline events through timeline-for-agent without using shell commands.",
-    shortHint: "Write timeline events from eventsJson or eventsFile.",
+    description: "Write timeline events through timeline-for-agent.",
+    shortHint: "Write timeline events from a structured events array.",
     topics: ["timeline"],
     inputSchema: {
       type: "object",
+      required: ["date", "events"],
       properties: {
-        date: { type: "string" },
-        eventsJson: { type: "string" },
-        eventsFile: { type: "string" },
-        locale: { type: "string" },
+        date: { type: "string", description: "Target date in YYYY-MM-DD." },
+        events: {
+          type: "array",
+          description: "Timeline events for the target date.",
+          items: {
+            type: "object",
+            required: ["startAt", "endAt"],
+            properties: {
+              id: { type: "string" },
+              startAt: { type: "string", description: "ISO datetime within the target date." },
+              endAt: { type: "string", description: "ISO datetime within the target date." },
+              title: { type: "string", description: "Event title. Required unless eventNodeId resolves a taxonomy label." },
+              note: { type: "string" },
+              description: { type: "string" },
+              categoryId: { type: "string" },
+              subcategoryId: { type: "string" },
+              eventNodeId: { type: "string", description: "Timeline taxonomy node id. Use this or provide a title." },
+              tags: {
+                type: "array",
+                items: { type: "string" },
+              },
+            },
+            additionalProperties: true,
+          },
+        },
+        locale: { type: "string", description: "Optional timeline locale." },
+        mode: { type: "string", description: "Optional write mode, usually merge." },
+        finalize: { type: "boolean", description: "Whether to finalize the day after writing." },
       },
       additionalProperties: false,
     },
     async handler({ services, args }) {
+      validateTimelineWriteArgs(args);
       const result = await services.timeline.write(args);
       return {
         text: "Timeline write completed.",
@@ -222,7 +227,7 @@ const PROJECT_TOOLS = [
     async handler({ services, args }) {
       const result = await services.timeline.serve(args);
       return {
-        text: "Timeline serve completed.",
+        text: result.url ? `Timeline serve started at ${result.url}` : "Timeline serve completed.",
         data: result,
       };
     },
@@ -242,34 +247,47 @@ const PROJECT_TOOLS = [
     async handler({ services, args }) {
       const result = await services.timeline.dev(args);
       return {
-        text: "Timeline dev completed.",
+        text: result.url ? `Timeline dev started at ${result.url}` : "Timeline dev completed.",
         data: result,
       };
     },
   },
   {
     name: "cyberboss_timeline_screenshot",
-    description: "Queue a timeline screenshot to be captured and sent back to the current WeChat chat.",
-    shortHint: "Queue a timeline screenshot with optional locale and extra args.",
+    description: "Capture a timeline screenshot and send it back to the current WeChat chat.",
+    shortHint: "Capture a timeline screenshot with structured selection fields.",
     topics: ["timeline"],
     inputSchema: {
       type: "object",
       properties: {
-        userId: { type: "string" },
-        outputFile: { type: "string" },
-        locale: { type: "string" },
-        args: {
-          type: "array",
-          items: { type: "string" },
-        },
+        userId: { type: "string", description: "Optional explicit WeChat user id." },
+        outputFile: { type: "string", description: "Optional absolute output path for the PNG file." },
+        selector: { type: "string", description: "main, timeline, analytics, events, or a custom CSS selector." },
+        range: { type: "string", description: "Optional range: day, week, or month." },
+        date: { type: "string", description: "Optional day selector YYYY-MM-DD." },
+        week: { type: "string", description: "Optional week key." },
+        month: { type: "string", description: "Optional month selector YYYY-MM." },
+        category: { type: "string", description: "Optional category label or id." },
+        subcategory: { type: "string", description: "Optional subcategory label or id." },
+        width: { type: "integer", description: "Optional viewport width in pixels." },
+        height: { type: "integer", description: "Optional viewport height in pixels." },
+        sidePadding: { type: "integer", description: "Optional screenshot padding in pixels." },
+        locale: { type: "string", description: "Optional timeline locale." },
       },
       additionalProperties: false,
     },
     async handler({ services, args, context }) {
-      const result = services.timeline.queueScreenshot(args, context);
+      const captured = await services.timeline.captureScreenshot(args);
+      const delivery = await services.channelFile.sendToCurrentChat({
+        userId: args.userId,
+        filePath: captured.outputFile,
+      }, context);
       return {
-        text: `Timeline screenshot queued: ${result.id}`,
-        data: result,
+        text: `Timeline screenshot sent: ${captured.outputFile}`,
+        data: {
+          ...captured,
+          delivery,
+        },
       };
     },
   },
@@ -279,7 +297,115 @@ function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+function buildToolDescription(tool) {
+  const baseDescription = normalizeText(tool?.description);
+  const signature = summarizeSchema(tool?.inputSchema);
+  if (!signature) {
+    return baseDescription;
+  }
+  return `${baseDescription} Input: ${signature}`;
+}
+
+function summarizeSchema(schema, { depth = 0 } = {}) {
+  if (!schema || typeof schema !== "object") {
+    return "";
+  }
+  const schemaType = normalizeText(schema.type).toLowerCase();
+  if (schemaType === "object") {
+    const properties = schema.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+    const required = new Set(Array.isArray(schema.required) ? schema.required : []);
+    const entries = Object.entries(properties);
+    if (!entries.length) {
+      return "{}";
+    }
+    const parts = entries.map(([key, value]) => {
+      const suffix = required.has(key) ? "" : "?";
+      return `${key}${suffix}: ${summarizeSchema(value, { depth: depth + 1 }) || "any"}`;
+    });
+    return `{ ${parts.join(", ")} }`;
+  }
+  if (schemaType === "array") {
+    const itemSummary = summarizeSchema(schema.items, { depth: depth + 1 }) || "any";
+    return `${itemSummary}[]`;
+  }
+  if (schemaType === "integer" || schemaType === "number" || schemaType === "string" || schemaType === "boolean") {
+    return schemaType;
+  }
+  return schemaType || "any";
+}
+
+function validateTimelineWriteArgs(args) {
+  const events = Array.isArray(args?.events) ? args.events : [];
+  events.forEach((event, index) => {
+    if (!event || typeof event !== "object" || Array.isArray(event)) {
+      return;
+    }
+    const hasTitle = normalizeText(event.title).length > 0;
+    const hasEventNodeId = normalizeText(event.eventNodeId).length > 0;
+    if (!hasTitle && !hasEventNodeId) {
+      throw new Error(`cyberboss_timeline_write input.events[${index}].title or input.events[${index}].eventNodeId is required.`);
+    }
+  });
+}
+
+function validateSchema(schema, value, toolName, path) {
+  if (!schema || typeof schema !== "object") {
+    return;
+  }
+  const schemaType = schema.type;
+  if (schemaType === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error(`${toolName} ${path} must be an object.`);
+    }
+    const properties = schema.properties && typeof schema.properties === "object"
+      ? schema.properties
+      : {};
+    const required = Array.isArray(schema.required) ? schema.required : [];
+    for (const key of required) {
+      if (!(key in value)) {
+        throw new Error(`${toolName} ${path}.${key} is required.`);
+      }
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!(key in properties)) {
+          throw new Error(`${toolName} ${path}.${key} is not allowed.`);
+        }
+      }
+    }
+    for (const [key, propertySchema] of Object.entries(properties)) {
+      if (key in value) {
+        validateSchema(propertySchema, value[key], toolName, `${path}.${key}`);
+      }
+    }
+    return;
+  }
+  if (schemaType === "array") {
+    if (!Array.isArray(value)) {
+      throw new Error(`${toolName} ${path} must be an array.`);
+    }
+    if (schema.items) {
+      value.forEach((item, index) => validateSchema(schema.items, item, toolName, `${path}[${index}]`));
+    }
+    return;
+  }
+  if (schemaType === "string" && typeof value !== "string") {
+    throw new Error(`${toolName} ${path} must be a string.`);
+  }
+  if (schemaType === "boolean" && typeof value !== "boolean") {
+    throw new Error(`${toolName} ${path} must be a boolean.`);
+  }
+  if (schemaType === "integer" && !Number.isInteger(value)) {
+    throw new Error(`${toolName} ${path} must be an integer.`);
+  }
+  if (schemaType === "number" && (typeof value !== "number" || !Number.isFinite(value))) {
+    throw new Error(`${toolName} ${path} must be a number.`);
+  }
+}
+
 module.exports = {
   ProjectToolHost,
-  buildProjectToolGuide,
+  listProjectToolNames,
 };

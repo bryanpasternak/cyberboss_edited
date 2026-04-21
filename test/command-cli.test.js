@@ -4,9 +4,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
-const { buildProjectToolGuide } = require("../src/tools/tool-host");
 const { resolveBodyInput } = require("../src/services/text-input");
-const { prepareTimelineInvocation } = require("../src/integrations/timeline");
+const { buildTimelineFailureMessage, prepareTimelineInvocation } = require("../src/integrations/timeline");
 
 function createTempFile(name, content) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-command-test-"));
@@ -14,20 +13,6 @@ function createTempFile(name, content) {
   fs.writeFileSync(filePath, content, "utf8");
   return filePath;
 }
-
-test("project tool guide tells the model to use project tools instead of shell commands", () => {
-  const guide = buildProjectToolGuide(["reminder"]);
-  assert.match(guide, /project tools/i);
-  assert.match(guide, /cyberboss_reminder_create/);
-  assert.doesNotMatch(guide, /npm --prefix/);
-});
-
-test("project tool guide scopes timeline hints to timeline tools", () => {
-  const guide = buildProjectToolGuide(["timeline"]);
-  assert.match(guide, /cyberboss_timeline_write/);
-  assert.match(guide, /cyberboss_timeline_screenshot/);
-  assert.doesNotMatch(guide, /cyberboss_reminder_create/);
-});
 
 test("reminder body can be loaded from --text-file", async () => {
   const filePath = createTempFile("reminder.txt", "  remember me  \n");
@@ -60,4 +45,14 @@ test("timeline invocation rejects mixed json sources", () => {
   assert.throws(() => {
     prepareTimelineInvocation("write", ["--json", "[]", "--events-json", "[]"]);
   }, /Use only one of --json, --events-json, or --events-file/);
+});
+
+test("timeline failure message explains port conflicts", () => {
+  const message = buildTimelineFailureMessage({
+    subcommand: "serve",
+    code: 1,
+    stderr: "Error: listen EADDRINUSE: address already in use 127.0.0.1:4317",
+  });
+  assert.match(message, /port is already in use/i);
+  assert.match(message, /4317/);
 });

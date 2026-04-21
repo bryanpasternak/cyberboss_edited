@@ -44,8 +44,6 @@ function readConfig() {
     claudePermissionMode: readTextEnv("CYBERBOSS_CLAUDE_PERMISSION_MODE") || "default",
     claudeDisableVerbose: readBoolEnv("CYBERBOSS_CLAUDE_DISABLE_VERBOSE"),
     claudeExtraArgs: readListEnv("CYBERBOSS_CLAUDE_EXTRA_ARGS"),
-    claudeProjectPluginDir: readTextEnv("CYBERBOSS_CLAUDE_PROJECT_PLUGIN_DIR")
-      || path.join(process.env.CYBERBOSS_HOME || path.resolve(__dirname, "..", ".."), "plugins", "cyberboss-tools"),
     sessionsFile: path.join(stateDir, "sessions.json"),
     startWithCheckin: (mode === "start" && hasArgFlag(argv, "--checkin")) || readBoolEnv("CYBERBOSS_ENABLE_CHECKIN"),
   };

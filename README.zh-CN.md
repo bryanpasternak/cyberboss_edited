@@ -197,6 +197,8 @@ CYBERBOSS_WEIXIN_QR_BOT_TYPE=3
 
 如果你要跑共享线程，建议也在第一次启动前就把 `CYBERBOSS_WORKSPACE_ROOT` 配好。这样 `shared:open` 会优先接到你当前项目对应的那条线程，而不是回退到别的历史绑定。
 
+当 `CYBERBOSS_RUNTIME=claudecode` 时，Cyberboss 会在当前工作区自动补写 `.mcp.json` 里的 `cyberboss_tools`，并在启动 Claude 时显式挂上这份 MCP 配置。Claude 能发现 Cyberboss project tools，靠的就是这条项目本地配置，而不是全局注册。
+
 ### 用户自己会用到的终端命令
 
 - `npm run login`
@@ -335,7 +337,7 @@ ${HOME}/.cyberboss
 <a id="agent-guide"></a>
 ## Agent 接入
 
-给 agent 暴露的 Cyberboss 能力现在改成了项目内结构化工具，不再把 diary、reminder、timeline、截图、发文件这些能力作为本地 capability CLI 命令暴露。
+给 agent 暴露的 Cyberboss 能力是项目内结构化工具。
 
 ### 常用项目工具
 
@@ -351,7 +353,7 @@ ${HOME}/.cyberboss
 
 ### Agent 使用约定
 
-- diary、reminder、timeline、screenshot、file-send 这类 Cyberboss 能力优先使用项目工具，不要退回到 shell 命令或本地 CLI wrapper
+- diary、reminder、timeline、screenshot、file-send 这类 Cyberboss 能力使用项目工具
 - 终端给人手动使用的仍然是 `README`、`--help` 和 [docs/commands.md](./docs/commands.md) 中的生命周期入口
 - 第一次执行失败时，先反馈报错，不要立刻读源码
 

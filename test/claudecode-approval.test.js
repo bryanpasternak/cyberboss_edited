@@ -65,6 +65,22 @@ test("claudecode approval events canonicalize view_image tool approvals", () => 
   assert.deepEqual(event.payload.commandTokens, ["view_image"]);
 });
 
+test("claudecode approval events canonicalize MCP tool approvals for stable always matching", () => {
+  const event = mapClaudeCodeMessageToRuntimeEvent({
+    type: "approval.requested",
+    sessionId: "thread-1",
+    requestId: "req-mcp-timeline",
+    toolName: "mcp__cyberboss_tools__cyberboss_timeline_write",
+    input: {
+      date: "2026-04-21",
+      events: [],
+    },
+  });
+
+  assert.deepEqual(event.payload.commandTokens, ["mcp_tool", "cyberboss_tools", "cyberboss_timeline_write"]);
+  assert.match(event.payload.command, /^cyberboss_timeline_write\b/);
+});
+
 test("claudecode approval events canonicalize Read image approvals for stable matching", () => {
   const event = mapClaudeCodeMessageToRuntimeEvent({
     type: "approval.requested",
@@ -513,6 +529,49 @@ test("handleRuntimeEvent auto-approves built-in view_image approvals without pro
   assert.deepEqual(responses, [{ requestId: "req-img-2", decision: "accept" }]);
 });
 
+test("handleRuntimeEvent auto-approves project-native MCP tool approvals without prompting", async () => {
+  const responses = [];
+  const appLike = {
+    config: { stateDir: path.join(os.tmpdir(), "cyberboss-approval-test") },
+    streamDelivery: {
+      async handleRuntimeEvent() {},
+    },
+    runtimeAdapter: {
+      getSessionStore() {
+        return {
+          clearApprovalPrompt() {},
+          findBindingForThreadId() {
+            return { bindingKey: "binding-1", workspaceRoot: "/workspace" };
+          },
+          getApprovalCommandAllowlistForWorkspace() {
+            return [];
+          },
+        };
+      },
+      async respondApproval(payload) {
+        responses.push(payload);
+      },
+    },
+    threadStateStore: {
+      resolveApproval() {},
+    },
+    async sendApprovalPrompt() {
+      throw new Error("should not prompt for project-native MCP tools");
+    },
+  };
+
+  await CyberbossApp.prototype.handleRuntimeEvent.call(appLike, {
+    type: "runtime.approval.requested",
+    payload: {
+      threadId: "thread-1",
+      requestId: "req-project-tool",
+      commandTokens: ["mcp_tool", "cyberboss_tools", "cyberboss_timeline_write"],
+    },
+  });
+
+  assert.deepEqual(responses, [{ requestId: "req-project-tool", decision: "accept" }]);
+});
+
 test("handleRuntimeEvent auto-approves inbox image reads for claudecode without prompting", async () => {
   const responses = [];
   const stateDir = path.join(os.tmpdir(), "cyberboss-approval-test");
@@ -699,6 +758,48 @@ test("handleRuntimeEvent auto-approves allowlisted prefixes for claudecode appro
   });
 
   assert.deepEqual(responses, [{ requestId: "req-4", decision: "accept" }]);
+});
+
+test("handleRuntimeEvent auto-approves allowlisted MCP tool approvals", async () => {
+  const responses = [];
+  const appLike = {
+    streamDelivery: {
+      async handleRuntimeEvent() {},
+    },
+    runtimeAdapter: {
+      getSessionStore() {
+        return {
+          clearApprovalPrompt() {},
+          findBindingForThreadId() {
+            return { bindingKey: "binding-1", workspaceRoot: "/workspace" };
+          },
+          getApprovalCommandAllowlistForWorkspace() {
+            return [["mcp_tool", "cyberboss_tools", "cyberboss_timeline_write"]];
+          },
+        };
+      },
+      async respondApproval(payload) {
+        responses.push(payload);
+      },
+    },
+    threadStateStore: {
+      resolveApproval() {},
+    },
+    async sendApprovalPrompt() {
+      throw new Error("should not prompt for allowlisted MCP tools");
+    },
+  };
+
+  await CyberbossApp.prototype.handleRuntimeEvent.call(appLike, {
+    type: "runtime.approval.requested",
+    payload: {
+      threadId: "thread-1",
+      requestId: "req-mcp-allow",
+      commandTokens: ["mcp_tool", "cyberboss_tools", "cyberboss_timeline_write"],
+    },
+  });
+
+  assert.deepEqual(responses, [{ requestId: "req-mcp-allow", decision: "accept" }]);
 });
 
 test("handleSwitchCommand stores the actual claudecode thread returned by runtime", async () => {

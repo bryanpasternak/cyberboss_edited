@@ -21,15 +21,23 @@ class ReminderService {
     this.queue = new ReminderQueueStore({ filePath: config.reminderQueueFile });
   }
 
-  async create({ delay = "", at = "", text = "", textFile = "", userId = "" } = {}, context = {}) {
+  async create({
+    delay = "",
+    delayMinutes = undefined,
+    at = "",
+    dueAt = "",
+    text = "",
+    textFile = "",
+    userId = "",
+  } = {}, context = {}) {
     const body = await resolveBodyInput({ text, textFile });
     if (!body) {
       throw new Error("Reminder text cannot be empty. Pass text or textFile.");
     }
 
-    const dueAtMs = resolveDueAtMs({ delay, at });
+    const dueAtMs = resolveDueAtMs({ delay, delayMinutes, at, dueAt });
     if (!Number.isFinite(dueAtMs) || dueAtMs <= Date.now()) {
-      throw new Error("Missing a valid time. Use delay like 30m or at like 2026-04-07T21:30+08:00.");
+      throw new Error("Missing a valid time. Use delayMinutes or dueAt like 2026-04-07T21:30+08:00.");
     }
 
     const account = resolveSelectedAccount(this.config);
@@ -79,19 +87,32 @@ function resolveReminderSenderId({ config, accountId, explicitUser = "", context
   });
 }
 
-function resolveDueAtMs({ delay = "", at = "" } = {}) {
+function resolveDueAtMs({ delay = "", delayMinutes = undefined, at = "", dueAt = "" } = {}) {
   const delayMs = parseDelay(delay);
-  const scheduledAtMs = parseAbsoluteTime(at);
-  if (delayMs && scheduledAtMs) {
-    throw new Error("delay and at cannot be used together");
+  const normalizedDelayMinutes = parseDelayMinutes(delayMinutes);
+  const scheduledAtMs = parseAbsoluteTime(dueAt || at);
+  const timeSourceCount = [delayMs, normalizedDelayMinutes, scheduledAtMs].filter((value) => value > 0).length;
+  if (timeSourceCount > 1) {
+    throw new Error("Use only one of delay, delayMinutes, at, or dueAt.");
   }
   if (delayMs) {
     return Date.now() + delayMs;
+  }
+  if (normalizedDelayMinutes) {
+    return Date.now() + normalizedDelayMinutes;
   }
   if (scheduledAtMs) {
     return scheduledAtMs;
   }
   return 0;
+}
+
+function parseDelayMinutes(rawValue) {
+  if (rawValue === undefined || rawValue === null || rawValue === "") {
+    return 0;
+  }
+  const parsed = Number.parseInt(String(rawValue), 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed * 60_000 : 0;
 }
 
 function parseDelay(rawValue) {
@@ -170,5 +191,6 @@ module.exports = {
   ReminderService,
   parseAbsoluteTime,
   parseDelay,
+  parseDelayMinutes,
   resolveDueAtMs,
 };

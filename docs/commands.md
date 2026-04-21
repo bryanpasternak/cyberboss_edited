@@ -85,7 +85,7 @@ Those capabilities are exposed as project-native structured tools:
 
 Notes:
 - These tools are bound to the Cyberboss project and routed through the repo's internal tool host.
-- Claude Code loads them through the repo-local `plugins/cyberboss-tools` plugin.
+- Claude Code loads them through workspace-local `.mcp.json` injected by Cyberboss and passed to Claude at startup with `--mcp-config`.
 - Codex loads them through the runtime-side Cyberboss MCP bridge configured at spawn time.
 - The public human terminal surface stays intentionally small: lifecycle commands plus shared bridge scripts.
 
@@ -110,7 +110,7 @@ Notes:
 
 Notes:
 
-- `/status` now covers what used to be split between `where` and `usage`
-- there is currently no separate `/context` command; use `/status` and read the `📦 context` line
+- `/status` covers thread, workspace, and context details
+- there is no separate `/context` command; use `/status` and read the `📦 context` line
 - `/compact` asks the current thread to compact its context and reports start / finish back to WeChat
 - file sending is still available, but no longer exposed as a WeChat command
