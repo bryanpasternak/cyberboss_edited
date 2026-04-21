@@ -13,6 +13,44 @@ class TimelineService {
     this.screenshotQueue = new TimelineScreenshotQueueStore({ filePath: config.timelineScreenshotQueueFile });
   }
 
+  async read({ date = "" } = {}) {
+    const args = [];
+    if (date) {
+      args.push("--date", date);
+    }
+    const execution = await this.timelineIntegration.runSubcommand("read", args);
+    return {
+      subcommand: "read",
+      args,
+      data: parseTimelineJsonOutput(execution, "read"),
+      execution,
+    };
+  }
+
+  async listCategories() {
+    const execution = await this.timelineIntegration.runSubcommand("categories", []);
+    return {
+      subcommand: "categories",
+      args: [],
+      data: parseTimelineJsonOutput(execution, "categories"),
+      execution,
+    };
+  }
+
+  async listProposals({ date = "" } = {}) {
+    const args = [];
+    if (date) {
+      args.push("--date", date);
+    }
+    const execution = await this.timelineIntegration.runSubcommand("proposals", args);
+    return {
+      subcommand: "proposals",
+      args,
+      data: parseTimelineJsonOutput(execution, "proposals"),
+      execution,
+    };
+  }
+
   async write({
     date = "",
     events = undefined,
@@ -176,6 +214,18 @@ class TimelineService {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function parseTimelineJsonOutput(execution, subcommand) {
+  const text = normalizeText(execution?.stdout);
+  if (!text) {
+    throw new Error(`timeline ${subcommand} returned no JSON output.`);
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    throw new Error(`timeline ${subcommand} returned invalid JSON output.`);
+  }
 }
 
 function countDefinedSources(values) {

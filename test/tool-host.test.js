@@ -27,6 +27,33 @@ function createHost() {
         },
       },
       timeline: {
+        async read(args) {
+          return {
+            data: {
+              date: args.date,
+              exists: true,
+              eventCount: 1,
+              events: [{ id: "evt-1" }],
+            },
+          };
+        },
+        async listCategories() {
+          return {
+            data: {
+              categoryCount: 2,
+              categories: [{ id: "work" }, { id: "life" }],
+            },
+          };
+        },
+        async listProposals(args) {
+          return {
+            data: {
+              date: args.date || "",
+              proposalCount: 1,
+              proposals: [{ id: "proposal-1" }],
+            },
+          };
+        },
         async write(args) {
           return args;
         },
@@ -61,6 +88,21 @@ test("tool host rejects legacy timeline write CLI-shaped fields", async () => {
       eventsJson: "{\"events\":[]}",
     }, {});
   }, /input\.eventsJson is not allowed/);
+});
+
+test("tool host exposes structured timeline read tools", async () => {
+  const host = createHost();
+  const readResult = await host.invokeTool("cyberboss_timeline_read", {
+    date: "2026-04-21",
+  }, {});
+  const categoriesResult = await host.invokeTool("cyberboss_timeline_categories", {}, {});
+  const proposalsResult = await host.invokeTool("cyberboss_timeline_proposals", {
+    date: "2026-04-21",
+  }, {});
+
+  assert.equal(readResult.text, "Timeline day 2026-04-21: 1 events.");
+  assert.equal(categoriesResult.text, "Timeline categories loaded: 2.");
+  assert.equal(proposalsResult.text, "Timeline proposals loaded: 1.");
 });
 
 test("tool host validates structured reminder input types", async () => {

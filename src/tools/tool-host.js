@@ -144,9 +144,72 @@ const PROJECT_TOOLS = [
     },
   },
   {
+    name: "cyberboss_timeline_read",
+    description: "Read the current timeline day data for a specific date. Use this before editing when the current day state is uncertain.",
+    shortHint: "Read a timeline day before editing it.",
+    topics: ["timeline"],
+    inputSchema: {
+      type: "object",
+      required: ["date"],
+      properties: {
+        date: { type: "string", description: "Target date in YYYY-MM-DD." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const result = await services.timeline.read(args);
+      const exists = !!result?.data?.exists;
+      const eventCount = Number.isInteger(result?.data?.eventCount) ? result.data.eventCount : 0;
+      return {
+        text: `Timeline day ${args.date}: ${exists ? `${eventCount} events` : "missing"}.`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: "cyberboss_timeline_categories",
+    description: "List the current timeline taxonomy categories, subcategories, and event nodes. Use this before choosing category ids or event nodes.",
+    shortHint: "Inspect the current timeline taxonomy before choosing category ids or event nodes.",
+    topics: ["timeline"],
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async handler({ services }) {
+      const result = await services.timeline.listCategories();
+      const categoryCount = Number.isInteger(result?.data?.categoryCount) ? result.data.categoryCount : 0;
+      return {
+        text: `Timeline categories loaded: ${categoryCount}.`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: "cyberboss_timeline_proposals",
+    description: "List proposed timeline event nodes, optionally filtered by date. Use this when deciding whether a new event node is actually needed.",
+    shortHint: "Inspect proposed timeline event nodes before introducing new taxonomy.",
+    topics: ["timeline"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        date: { type: "string", description: "Optional date in YYYY-MM-DD." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const result = await services.timeline.listProposals(args);
+      const proposalCount = Number.isInteger(result?.data?.proposalCount) ? result.data.proposalCount : 0;
+      return {
+        text: `Timeline proposals loaded: ${proposalCount}.`,
+        data: result,
+      };
+    },
+  },
+  {
     name: "cyberboss_timeline_write",
-    description: "Write timeline events through timeline-for-agent.",
-    shortHint: "Write timeline events from a structured events array.",
+    description: "Write timeline events through timeline-for-agent. Inspect the current day and taxonomy first when category ids, event nodes, or existing events are uncertain.",
+    shortHint: "Write timeline events after checking the current day and taxonomy when needed.",
     topics: ["timeline"],
     inputSchema: {
       type: "object",

@@ -13,6 +13,35 @@ function createService() {
     timelineIntegration: {
       async runSubcommand(subcommand, args) {
         calls.push({ subcommand, args });
+        if (subcommand === "read") {
+          return {
+            stdout: JSON.stringify({
+              date: "2026-04-21",
+              exists: true,
+              status: "draft",
+              updatedAt: "2026-04-21T03:10:00+08:00",
+              eventCount: 1,
+              events: [{ id: "evt-1", title: "Deep work" }],
+            }),
+          };
+        }
+        if (subcommand === "categories") {
+          return {
+            stdout: JSON.stringify({
+              categoryCount: 1,
+              categories: [{ id: "work", label: "Work", children: [] }],
+            }),
+          };
+        }
+        if (subcommand === "proposals") {
+          return {
+            stdout: JSON.stringify({
+              date: "2026-04-21",
+              proposalCount: 1,
+              proposals: [{ id: "proposal-1", label: "Coding", parentId: "coding" }],
+            }),
+          };
+        }
         if (subcommand === "serve") {
           return { url: "http://127.0.0.1:4317" };
         }
@@ -30,6 +59,48 @@ function createService() {
   });
   return { service, calls };
 }
+
+test("timeline service parses read JSON output", async () => {
+  const { service, calls } = createService();
+  const result = await service.read({ date: "2026-04-21" });
+
+  assert.equal(result.data.exists, true);
+  assert.equal(result.data.eventCount, 1);
+  assert.deepEqual(calls, [
+    {
+      subcommand: "read",
+      args: ["--date", "2026-04-21"],
+    },
+  ]);
+});
+
+test("timeline service parses category JSON output", async () => {
+  const { service, calls } = createService();
+  const result = await service.listCategories();
+
+  assert.equal(result.data.categoryCount, 1);
+  assert.equal(result.data.categories[0].id, "work");
+  assert.deepEqual(calls, [
+    {
+      subcommand: "categories",
+      args: [],
+    },
+  ]);
+});
+
+test("timeline service parses proposal JSON output", async () => {
+  const { service, calls } = createService();
+  const result = await service.listProposals({ date: "2026-04-21" });
+
+  assert.equal(result.data.proposalCount, 1);
+  assert.equal(result.data.proposals[0].id, "proposal-1");
+  assert.deepEqual(calls, [
+    {
+      subcommand: "proposals",
+      args: ["--date", "2026-04-21"],
+    },
+  ]);
+});
 
 test("timeline service serializes structured events into timeline JSON payload", async () => {
   const { service, calls } = createService();
