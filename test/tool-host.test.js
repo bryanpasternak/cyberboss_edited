@@ -173,6 +173,7 @@ test("tool host exposes whereabouts tools from the external dependency", async (
   const host = createHost();
   const tools = host.listTools();
   const snapshotTool = tools.find((tool) => tool.name === "whereabouts_snapshot");
+  const ingestTool = tools.find((tool) => tool.name === "whereabouts_ingest_point");
   const currentStayResult = await host.invokeTool("whereabouts_current_stay", {}, {});
   const snapshotResult = await host.invokeTool("whereabouts_snapshot", {
     stayLimit: 3,
@@ -180,6 +181,7 @@ test("tool host exposes whereabouts tools from the external dependency", async (
   }, {});
 
   assert.ok(snapshotTool);
+  assert.equal(ingestTool, undefined);
   assert.equal(currentStayResult.data.currentStay.address, "Office");
   assert.equal(snapshotResult.data.currentStay.address, "Office");
   assert.equal(snapshotResult.data.recentStays.length, 1);
