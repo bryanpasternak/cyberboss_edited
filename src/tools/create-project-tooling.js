@@ -34,6 +34,7 @@ function createProjectTooling(config, options = {}) {
         token: config.locationToken,
         historyLimit: config.locationHistoryLimit,
         movementEventLimit: config.locationMovementEventLimit,
+        sampleLimit: config.locationSampleLimit,
         stayMergeRadiusMeters: config.locationStayMergeRadiusMeters,
         stayBreakConfirmRadiusMeters: config.locationStayBreakConfirmRadiusMeters,
         stayBreakConfirmSamples: config.locationStayBreakConfirmSamples,

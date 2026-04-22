@@ -96,6 +96,16 @@ function createHost() {
             limit: args.limit,
           };
         },
+        getSummary(args) {
+          return {
+            range: args.range || "day",
+            stayCount: 2,
+            moveCount: 1,
+            mobilityState: { state: "staying" },
+            knownPlaces: [{ placeId: "home", durationText: "2h" }],
+            batteryTrend: { sampleCount: 2, deltaPercent: -45 },
+          };
+        },
         appendPoint(args) {
           return {
             point: { id: "point-1", ...args },
@@ -173,18 +183,22 @@ test("tool host exposes whereabouts tools from the external dependency", async (
   const host = createHost();
   const tools = host.listTools();
   const snapshotTool = tools.find((tool) => tool.name === "whereabouts_snapshot");
+  const summaryTool = tools.find((tool) => tool.name === "whereabouts_summary");
   const ingestTool = tools.find((tool) => tool.name === "whereabouts_ingest_point");
   const currentStayResult = await host.invokeTool("whereabouts_current_stay", {}, {});
   const snapshotResult = await host.invokeTool("whereabouts_snapshot", {
     stayLimit: 3,
     moveLimit: 2,
   }, {});
+  const summaryResult = await host.invokeTool("whereabouts_summary", { range: "day" }, {});
 
   assert.ok(snapshotTool);
+  assert.ok(summaryTool);
   assert.equal(ingestTool, undefined);
   assert.equal(currentStayResult.data.currentStay.address, "Office");
   assert.equal(snapshotResult.data.currentStay.address, "Office");
   assert.equal(snapshotResult.data.recentStays.length, 1);
+  assert.equal(summaryResult.data.mobilityState.state, "staying");
 });
 
 test("tool host rejects timeline events without title or eventNodeId", async () => {
