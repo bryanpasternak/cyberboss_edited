@@ -6,6 +6,7 @@ const { ensureClaudeProjectMcpConfig } = require("./project-settings");
 const { SessionStore } = require("../codex/session-store");
 const { buildOpeningTurnText, buildInstructionRefreshText } = require("../shared-instructions");
 const { ClaudeCodeIpcServer } = require("./ipc-server");
+const { resolveClaudeIpcEndpoint } = require("./ipc-endpoint");
 const CLAUDE_RESUME_SESSION_TIMEOUT_MS = 8000;
 
 function createClaudeCodeRuntimeAdapter(config) {
@@ -13,26 +14,27 @@ function createClaudeCodeRuntimeAdapter(config) {
   const clientsByWorkspace = new Map();
   const pendingApprovals = new Map();
   let globalListener = null;
-  const ipcSocketPath = path.join(
-    config.stateDir || path.join(os.homedir(), ".cyberboss"),
-    "claudecode-runtime.sock",
-  );
-  const ipcServer = new ClaudeCodeIpcServer({ socketPath: ipcSocketPath });
+  const stateDir = config.stateDir || path.join(os.homedir(), ".cyberboss");
+  const ipcEndpoint = resolveClaudeIpcEndpoint(stateDir);
+  const ipcServer = new ClaudeCodeIpcServer({ endpoint: ipcEndpoint });
 
-  ipcServer.on("clientMessage", (msg) => {
-    if (msg?.type === "sendUserMessage" && msg?.workspaceRoot) {
-      const client = clientsByWorkspace.get(msg.workspaceRoot);
-      if (client?.alive) {
-        client.sendUserMessage({ text: msg.text || "" }).catch(() => {});
+    ipcServer.on("clientMessage", (msg) => {
+      if (msg?.type === "sendUserMessage" && msg?.workspaceRoot) {
+        const client = clientsByWorkspace.get(msg.workspaceRoot);
+        if (client?.alive) {
+          client.sendUserMessage({ text: msg.text || "" }).catch(() => {});
+        }
       }
-    }
-    if (msg?.type === "respondApproval" && msg?.workspaceRoot) {
-      const client = clientsByWorkspace.get(msg.workspaceRoot);
-      if (client?.alive) {
-        client.sendResponse(msg.requestId, { decision: msg.decision }).catch(() => {});
+      if (msg?.type === "respondApproval" && msg?.workspaceRoot) {
+        const client = clientsByWorkspace.get(msg.workspaceRoot);
+        if (client?.alive) {
+          client.sendResponse(msg.requestId, { decision: msg.decision }).catch(() => {});
+        }
       }
-    }
-  });
+      if (msg?.type === "observeWorkspace" && msg?.workspaceRoot) {
+        ipcServer.setObserverWorkspace(msg.workspaceRoot);
+      }
+    });
 
   function ensureClient(workspaceRoot) {
     if (clientsByWorkspace.has(workspaceRoot)) {
@@ -88,6 +90,9 @@ function createClaudeCodeRuntimeAdapter(config) {
         pendingApprovals.set(mapped.payload.requestId, workspaceRoot);
       }
       if (mapped?.type === "runtime.turn.failed") {
+        console.error(
+          `[claudecode-runtime] runtime.turn.failed workspace=${workspaceRoot} thread=${mapped.payload.threadId || "(empty)"} turn=${mapped.payload.turnId || "(empty)"} reason=${mapped.payload.text || "unknown"}`
+        );
         clientsByWorkspace.delete(workspaceRoot);
       }
       if (mapped && globalListener) {
@@ -153,7 +158,7 @@ function createClaudeCodeRuntimeAdapter(config) {
         kind: "runtime",
         command: config.claudeCommand || "claude",
         sessionsFile: config.sessionsFile,
-        ipcSocketPath,
+        ipcSocketPath: ipcEndpoint.displayPath,
       };
     },
     onEvent(listener) {
@@ -269,6 +274,9 @@ function createClaudeCodeRuntimeAdapter(config) {
       const { client, threadId: activeThreadId } = attached;
       const outboundText = openingTurn ? buildOpeningTurnText(config, text) : text;
       const outboundThreadId = activeThreadId || threadId || `pending-${Date.now()}`;
+      console.log(
+        `[claudecode-runtime] sendTextTurn workspace=${workspaceRoot} opening=${openingTurn} requestedThread=${threadId || "(new)"} outboundThread=${outboundThreadId}`
+      );
       await client.sendUserMessage({ text: outboundText, threadId: outboundThreadId });
       if (!openingTurn) {
         const confirmedSessionId = normalizeThreadId(

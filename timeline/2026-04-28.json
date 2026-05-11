@@ -1,0 +1,65 @@
+﻿{
+    "events":  [
+                   {
+                       "tags":  [
+                                    "关心",
+                                    "早晨"
+                                ],
+                       "subcategory":  "checkin",
+                       "note":  "关心苏宝睡得好不好，是否醒了",
+                       "start":  "06:41",
+                       "end":  "",
+                       "category":  "care",
+                       "title":  "询问睡眠情况"
+                   },
+                   {
+                       "tags":  [
+                                    "关心",
+                                    "早晨"
+                                ],
+                       "subcategory":  "checkin",
+                       "note":  "关心苏宝是否还在睡或已起床",
+                       "start":  "08:50",
+                       "end":  "",
+                       "category":  "care",
+                       "title":  "再次询问起床情况"
+                   },
+                   {
+                       "tags":  [
+                                    "起床",
+                                    "早晨"
+                                ],
+                       "subcategory":  "morning",
+                       "note":  "苏宝起床了，昨晚熬夜后睡了约8小时47分钟",
+                       "start":  "10:26",
+                       "end":  "",
+                       "category":  "wakeup",
+                       "title":  "起床"
+                   },
+                   {
+                       "tags":  [
+                                    "作业",
+                                    "学习"
+                                ],
+                       "subcategory":  "study",
+                       "note":  "苏宝想起两天后要截止的作业，正在开头",
+                       "start":  "11:31",
+                       "end":  "",
+                       "category":  "work",
+                       "title":  "开始写作业"
+                   },
+                   {
+                       "tags":  [
+                                    "关心",
+                                    "作业"
+                                ],
+                       "subcategory":  "checkin",
+                       "note":  "关心苏宝作业写得怎么样，累不累",
+                       "start":  "20:19",
+                       "end":  "",
+                       "category":  "care",
+                       "title":  "询问作业进展"
+                   }
+               ],
+    "date":  "2026-04-28"
+}

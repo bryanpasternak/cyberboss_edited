@@ -1,0 +1,29 @@
+﻿{
+    "events":  [
+                   {
+                       "tags":  [
+                                    "开心",
+                                    "放松"
+                                ],
+                       "subcategory":  "gaming",
+                       "note":  "苏宝在玩游戏，心情愉快",
+                       "start":  "23:15",
+                       "end":  "23:46",
+                       "category":  "leisure",
+                       "title":  "玩游戏很开心"
+                   },
+                   {
+                       "tags":  [
+                                    "休息",
+                                    "晚安"
+                                ],
+                       "subcategory":  "bedtime",
+                       "note":  "苏宝说要睡了，准备休息",
+                       "start":  "01:39",
+                       "end":  "10:26",
+                       "category":  "sleep",
+                       "title":  "准备睡觉"
+                   }
+               ],
+    "date":  "2026-04-27"
+}

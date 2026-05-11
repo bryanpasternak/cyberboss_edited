@@ -473,6 +473,7 @@ class CyberbossApp {
     } catch (error) {
       this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
       const messageText = error instanceof Error ? error.message : String(error || "unknown error");
+      console.error(`[cyberboss] dispatchPreparedTurn failed workspace=${workspaceRoot} binding=${bindingKey} error=${messageText}`);
       await this.channelAdapter.sendText({
         userId: prepared.senderId,
         text: `❌ Request failed\n${messageText}`,
@@ -1624,6 +1625,9 @@ class CyberbossApp {
       }
       try {
         this.turnGateStore.releaseThread(event.payload.threadId);
+        console.log(
+          `[cyberboss] runtime event ${event.type} thread=${event.payload.threadId} turn=${event.payload.turnId || "(empty)"} linked=${linked?.workspaceRoot || "(none)"}`
+        );
         if (event.type === "runtime.turn.failed") {
           await this.sendFailureToThread(
             event.payload.threadId,

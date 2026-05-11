@@ -1,4 +1,8 @@
 const { spawn } = require("child_process");
+const os = require("os");
+
+const IS_WINDOWS = os.platform() === "win32";
+const WINDOWS_EXECUTABLE_SUFFIX_RE = /\.(cmd|exe|bat)$/i;
 
 class ClaudeCodeProcessClient {
   constructor({ command = "claude", cwd, env, model = "", permissionMode = "default", disableVerbose = false, extraArgs = [], mcpConfigPaths = [], ipcServer = null, workspaceRoot = "" }) {
@@ -55,13 +59,14 @@ class ClaudeCodeProcessClient {
       mcpConfigPaths: this.mcpConfigPaths,
       resumeSessionId,
     });
+    const spawnSpec = buildClaudeSpawnSpec(this.command, args);
     const mcpLabel = this.mcpConfigPaths.length
       ? this.mcpConfigPaths.join(",")
       : "(none)";
     console.log(
-      `[claudecode-runtime] launching command=${this.command} cwd=${this.cwd} mcp_config=${mcpLabel}`
+      `[claudecode-runtime] launching command=${spawnSpec.command} args=${spawnSpec.args.join(" ")} cwd=${this.cwd} mcp_config=${mcpLabel}`
     );
-    const child = spawn(this.command, args, {
+    const child = spawn(spawnSpec.command, spawnSpec.args, {
       cwd: this.cwd,
       env: this.env,
       stdio: ["pipe", "pipe", "pipe"],
@@ -91,6 +96,9 @@ class ClaudeCodeProcessClient {
     });
 
     child.on("error", (err) => {
+      console.error(
+        `[claudecode-runtime] process.error workspace=${this.workspaceRoot} session=${this.activeThreadId || this.sessionId || "(empty)"} turn=${this.pendingTurnId || "(empty)"} error=${err.message}`
+      );
       this.rejectSessionWaiters(err);
       this.alive = false;
       this.child = null;
@@ -99,6 +107,9 @@ class ClaudeCodeProcessClient {
     });
 
     child.on("close", (code) => {
+      console.error(
+        `[claudecode-runtime] process.close workspace=${this.workspaceRoot} session=${this.activeThreadId || this.sessionId || "(empty)"} turn=${this.pendingTurnId || "(empty)"} code=${code ?? "unknown"}`
+      );
       this.rejectSessionWaiters(new Error(`claudecode process closed with code ${code ?? "unknown"}`));
       this.alive = false;
       this.child = null;
@@ -124,6 +135,9 @@ class ClaudeCodeProcessClient {
           }
           this.sessionId = raw.session_id;
           this.resumeSessionId = "";
+          console.log(
+            `[claudecode-runtime] session.id workspace=${this.workspaceRoot} session=${raw.session_id} turn=${this.pendingTurnId || "(empty)"}`
+          );
           this.resolveSessionWaiters(raw.session_id);
           this.emit({ type: "session.id", sessionId: raw.session_id }, raw);
         }
@@ -212,6 +226,9 @@ class ClaudeCodeProcessClient {
       this.sessionId = raw.session_id;
       this.resumeSessionId = "";
     }
+    console.log(
+      `[claudecode-runtime] turn.completed workspace=${this.workspaceRoot} session=${this.activeThreadId || this.sessionId || "(empty)"} turn=${this.pendingTurnId || "(empty)"}`
+    );
     this.emit({
       type: "turn.completed",
       turnId: this.pendingTurnId,
@@ -225,6 +242,9 @@ class ClaudeCodeProcessClient {
   handleControlRequest(raw) {
     const request = raw?.request || {};
     if (request.subtype !== "can_use_tool") return;
+    console.log(
+      `[claudecode-runtime] approval.requested workspace=${this.workspaceRoot} session=${this.activeThreadId || this.sessionId || "(empty)"} turn=${this.pendingTurnId || "(empty)"} tool=${request.tool_name || "(unknown)"}`
+    );
     this.emit({
       type: "approval.requested",
       requestId: raw.request_id,
@@ -387,6 +407,36 @@ function buildArgs({ model, permissionMode, disableVerbose, extraArgs, mcpConfig
     args.push(...safe);
   }
   return args;
+}
+
+function buildClaudeSpawnSpec(command, args = []) {
+  const normalizedCommand = String(command || "").trim() || "claude";
+  if (IS_WINDOWS) {
+    return {
+      command: "cmd.exe",
+      args: ["/d", "/s", "/c", buildWindowsCommand(normalizedCommand, args)],
+    };
+  }
+  return {
+    command: normalizedCommand,
+    args,
+  };
+}
+
+function buildWindowsCommand(command, args = []) {
+  return [command, ...args].map(quoteWindowsCmdArg).join(" ");
+}
+
+function quoteWindowsCmdArg(value) {
+  const text = String(value ?? "");
+  if (!text.length) {
+    return '""';
+  }
+  if (!/[\s"]/u.test(text)) {
+    return text;
+  }
+  const escaped = text.replace(/(\\*)"/g, "$1$1\\\"");
+  return `"${escaped.replace(/(\\+)$/g, "$1$1")}"`;
 }
 
 function isValidSessionId(value) {

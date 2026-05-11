@@ -3,16 +3,20 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { EventEmitter } = require("events");
+const { resolveClaudeIpcEndpoint } = require("./ipc-endpoint");
 
 class ClaudeCodeIpcServer extends EventEmitter {
-  constructor({ socketPath }) {
+  constructor({ socketPath, endpoint = null }) {
     super();
-    this.socketPath = socketPath;
-    this.tokenFile = `${socketPath}.token`;
+    this.endpoint = endpoint || resolveClaudeIpcEndpoint(path.dirname(socketPath || ""));
+    this.socketPath = this.endpoint.path;
+    this.displayPath = this.endpoint.displayPath;
+    this.tokenFile = this.endpoint.tokenFile;
     this.authToken = "";
     this.server = null;
     this.clients = new Set();
     this.authenticated = new Set();
+    this.observerWorkspaceByClient = new Map();
   }
 
   start() {
@@ -41,6 +45,9 @@ class ClaudeCodeIpcServer extends EventEmitter {
               continue;
             }
             if (validateIpcMessage(msg)) {
+              if (msg?.type === "observeWorkspace") {
+                this.setObserverWorkspace(msg.workspaceRoot, socket);
+              }
               this.emit("clientMessage", msg, socket);
             }
           } catch {
@@ -52,22 +59,33 @@ class ClaudeCodeIpcServer extends EventEmitter {
       socket.on("close", () => {
         this.clients.delete(socket);
         this.authenticated.delete(socket);
+        this.observerWorkspaceByClient.delete(socket);
       });
 
       socket.on("error", () => {
         this.clients.delete(socket);
         this.authenticated.delete(socket);
+        this.observerWorkspaceByClient.delete(socket);
       });
     });
 
+    this.server.on("error", (error) => {
+      console.error(`[claudecode-runtime] ipc server error path=${this.displayPath} error=${error.message}`);
+    });
+
     this.server.listen(this.socketPath, () => {
-      fs.chmodSync(this.socketPath, 0o600);
+      if (this.endpoint.kind === "socket") {
+        fs.chmodSync(this.socketPath, 0o600);
+      }
     });
   }
 
   broadcast(event) {
     const payload = JSON.stringify(event) + "\n";
     for (const client of this.authenticated) {
+      if (!this.shouldDeliverEventToClient(client, event)) {
+        continue;
+      }
       try {
         client.write(payload);
       } catch {
@@ -76,12 +94,48 @@ class ClaudeCodeIpcServer extends EventEmitter {
     }
   }
 
+  setObserverWorkspace(workspaceRoot = "", socket = null) {
+    if (!socket) {
+      return;
+    }
+    const normalizedWorkspaceRoot = typeof workspaceRoot === "string" ? workspaceRoot.trim() : "";
+    if (!normalizedWorkspaceRoot) {
+      this.observerWorkspaceByClient.delete(socket);
+      return;
+    }
+    this.observerWorkspaceByClient.set(socket, normalizedWorkspaceRoot);
+  }
+
+  shouldDeliverEventToClient(socket, event) {
+    if (!socket || !event || typeof event !== "object") {
+      return true;
+    }
+    const observedWorkspaceRoot = this.observerWorkspaceByClient.get(socket);
+    if (!observedWorkspaceRoot) {
+      return true;
+    }
+    if (event.type === "stderr") {
+      return true;
+    }
+    if (event.type === "inboundMessage") {
+      return normalizeWorkspaceRoot(event.workspaceRoot) === observedWorkspaceRoot;
+    }
+    if (event.type !== "processEvent") {
+      return true;
+    }
+    const eventWorkspaceRoot = normalizeWorkspaceRoot(event.event?.workspaceRoot || event.raw?.workspaceRoot);
+    return !eventWorkspaceRoot || eventWorkspaceRoot === observedWorkspaceRoot;
+  }
+
   ensureDirectory() {
-    const dir = path.dirname(this.socketPath);
+    const dir = path.dirname(this.tokenFile);
     fs.mkdirSync(dir, { recursive: true });
   }
 
   removeStaleSocket() {
+    if (this.endpoint.kind !== "socket") {
+      return;
+    }
     try {
       const stat = fs.lstatSync(this.socketPath);
       if (!stat.isSocket()) {
@@ -146,9 +200,15 @@ function validateIpcMessage(msg) {
       return typeof msg.workspaceRoot === "string" && typeof msg.text === "string";
     case "respondApproval":
       return typeof msg.workspaceRoot === "string" && typeof msg.requestId === "string";
+    case "observeWorkspace":
+      return typeof msg.workspaceRoot === "string";
     default:
       return true;
   }
+}
+
+function normalizeWorkspaceRoot(value) {
+  return typeof value === "string" ? value.trim() : "";
 }
 
 module.exports = { ClaudeCodeIpcServer };

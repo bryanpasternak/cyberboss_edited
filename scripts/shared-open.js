@@ -4,6 +4,7 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const readline = require("readline");
+const { resolveClaudeIpcEndpoint } = require("../src/adapters/runtime/claudecode/ipc-endpoint");
 const {
   listenUrl,
   ensureSharedAppServer,
@@ -43,15 +44,15 @@ async function main() {
   // For Claude: connect to the bridge's IPC socket so we can observe and
   // interact with the same ClaudeCode process that handles WeChat messages.
   const stateDir = process.env.CYBERBOSS_STATE_DIR || path.join(os.homedir(), ".cyberboss");
-  const socketPath = path.join(stateDir, "claudecode-runtime.sock");
+  const ipcEndpoint = resolveClaudeIpcEndpoint(stateDir);
 
-  if (!fs.existsSync(socketPath)) {
-    console.error(`Claude IPC socket not found: ${socketPath}`);
-    console.error("Make sure the bridge is running with CYBERBOSS_RUNTIME=claudecode.");
+  if (!fs.existsSync(ipcEndpoint.tokenFile)) {
+    console.error(`Claude IPC auth token not found: ${ipcEndpoint.tokenFile}`);
+    console.error(`Make sure the bridge is running with CYBERBOSS_RUNTIME=claudecode and listening on ${ipcEndpoint.displayPath}.`);
     process.exit(1);
   }
 
-  const socket = net.createConnection(socketPath);
+  const socket = net.createConnection(ipcEndpoint.path);
   socket.setEncoding("utf8");
 
   let connected = false;
@@ -64,12 +65,12 @@ async function main() {
     setTimeout(() => reject(new Error("connect timeout")), 3000);
   });
 
-  console.log(`Connected to ClaudeCode bridge IPC (${socketPath})`);
+  console.log(`Connected to ClaudeCode bridge IPC (${ipcEndpoint.displayPath})`);
   console.log(`Observing workspace: ${workspaceRoot}`);
   console.log("Type your message and press Enter to send. Ctrl+C to exit.\n");
 
   // Authenticate with the IPC server
-  const tokenFile = `${socketPath}.token`;
+  const tokenFile = ipcEndpoint.tokenFile;
   let authToken = "";
   try {
     authToken = fs.readFileSync(tokenFile, "utf8").trim();
@@ -78,6 +79,7 @@ async function main() {
     process.exit(1);
   }
   socket.write(JSON.stringify({ type: "auth", token: authToken }) + "\n");
+  socket.write(JSON.stringify({ type: "observeWorkspace", workspaceRoot }) + "\n");
 
   // Handle incoming events from the bridge
   let buffer = "";
