@@ -725,7 +725,8 @@ function resolveSystemReplyAction(replyText) {
     return { kind: "invalid", reason: "final reply is empty" };
   }
 
-  const candidate = extractSystemActionJsonCandidate(normalized) || normalized;
+  const unwrapped = unwrapJsonCodeFence(normalized) || normalized;
+  const candidate = extractSystemActionJsonCandidate(unwrapped) || unwrapped;
   const parsed = tryParseJson(candidate);
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
     return { kind: "invalid", reason: "final reply is not a JSON object" };
