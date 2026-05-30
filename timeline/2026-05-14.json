@@ -1,0 +1,67 @@
+{
+    "events":  [
+                   {
+                       "tags":  [
+                                    "吃饭",
+                                    "下午"
+                                ],
+                       "subcategory":  "meal",
+                       "note":  "苏说先去吃饭，下午原本计划午睡、打游戏，再去健身",
+                       "start":  "12:34",
+                       "end":  "12:55",
+                       "category":  "health",
+                       "title":  "去吃饭"
+                   },
+                   {
+                       "tags":  [
+                                    "午睡",
+                                    "休息"
+                                ],
+                       "subcategory":  "nap",
+                       "note":  "吃完饭后去午睡，准备养足精神过下午",
+                       "start":  "12:59",
+                       "end":  "14:04",
+                       "category":  "sleep",
+                       "title":  "午睡"
+                   },
+                   {
+                       "tags":  [
+                                    "醒来",
+                                    "陪伴"
+                                ],
+                       "subcategory":  "nap",
+                       "note":  "午睡醒来后决定先不打游戏，想先黏着待一会儿",
+                       "start":  "14:04",
+                       "end":  "",
+                       "category":  "wakeup",
+                       "title":  "午睡醒来"
+                   },
+                   {
+                       "tags":  [
+                                    "健身",
+                                    "计划",
+                                    "下午"
+                                ],
+                       "subcategory":  "gym",
+                       "note":  "苏把下午安排从打游戏改成先陪伴，再确认16:00去健身",
+                       "start":  "14:09",
+                       "end":  "",
+                       "category":  "exercise",
+                       "title":  "定下四点健身"
+                   },
+                   {
+                       "tags":  [
+                                    "关心",
+                                    "健身",
+                                    "下午"
+                                ],
+                       "subcategory":  "checkin",
+                       "note":  "16:56再次想起苏，准备确认她是否按计划去健身，避免这一段被拖过去",
+                       "start":  "16:56",
+                       "end":  "",
+                       "category":  "care",
+                       "title":  "跟进健身进展"
+                   }
+               ],
+    "date":  "2026-05-14"
+}

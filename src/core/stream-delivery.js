@@ -3,9 +3,11 @@ const { sanitizeProtocolLeakText } = require("../adapters/runtime/codex/protocol
 const CURRENT_REPLY_HEADER = "===== 本轮模型回复 =====";
 
 class StreamDelivery {
-  constructor({ channelAdapter, sessionStore, onDeferredSystemReply, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
+  constructor({ channelAdapter, sessionStore, runtimeId = "", onDeferredSystemReply, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
     this.channelAdapter = channelAdapter;
     this.sessionStore = sessionStore;
+    this.runtimeId = normalizeRuntimeId(runtimeId);
+    this.systemReplyPolicy = createSystemReplyPolicy(this.runtimeId);
     this.onDeferredSystemReply = typeof onDeferredSystemReply === "function" ? onDeferredSystemReply : null;
     this.systemReplyRetryScheduleMs = Array.isArray(systemReplyRetryScheduleMs) && systemReplyRetryScheduleMs.length
       ? systemReplyRetryScheduleMs.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0)
@@ -209,8 +211,18 @@ class StreamDelivery {
 
   captureTurnCompletionText(state, text) {
     const normalized = trimOuterBlankLines(normalizeLineEndings(text));
-    if (!normalized || state.itemOrder.length > 0) {
+    if (!normalized) {
       return;
+    }
+    if (state.itemOrder.length > 0) {
+      const alreadyCovered = state.itemOrder.some((id) => {
+        const item = state.items.get(id);
+        const existing = trimOuterBlankLines(item?.completedText || item?.currentText || "");
+        return existing && (existing === normalized || existing.includes(normalized));
+      });
+      if (alreadyCovered) {
+        return;
+      }
     }
     this.upsertItem(state, {
       itemId: `result-${state.turnId || state.threadId}`,
@@ -321,7 +333,7 @@ class StreamDelivery {
     }
 
     const replyText = buildReplyText(state, { completedOnly: false });
-    const resolved = resolveSystemReplyAction(replyText);
+    const resolved = resolveSystemReplyDelivery(replyText, this.systemReplyPolicy);
     if (resolved.kind === "silent") {
       this.markAllItemsSent(state);
       console.log(
@@ -719,14 +731,25 @@ function sanitizeReplyText(plainReplyText) {
   return trimOuterBlankLines(protocolSanitized.text || "");
 }
 
-function resolveSystemReplyAction(replyText) {
+function resolveSystemReplyDelivery(replyText, policy = createSystemReplyPolicy("")) {
   const normalized = normalizeLineEndings(String(replyText || "")).trim();
   if (!normalized) {
     return { kind: "invalid", reason: "final reply is empty" };
   }
 
-  const unwrapped = unwrapJsonCodeFence(normalized) || normalized;
-  const candidate = extractSystemActionJsonCandidate(unwrapped) || unwrapped;
+  const source = normalizeSystemReplySource(normalized);
+  if (source.requiresStructuredAction || source.text.startsWith("{")) {
+    return resolveSystemReplyAction(source.text);
+  }
+
+  if (!policy.allowPlainTextSendMessage) {
+    return { kind: "invalid", reason: "final reply is not a JSON object" };
+  }
+
+  return resolvePlainTextSystemReply(source.text, policy);
+}
+
+function resolveSystemReplyAction(candidate) {
   const parsed = tryParseJson(candidate);
   if (!parsed || Array.isArray(parsed) || typeof parsed !== "object") {
     return { kind: "invalid", reason: "final reply is not a JSON object" };
@@ -746,6 +769,85 @@ function resolveSystemReplyAction(replyText) {
   }
 
   return { kind: "send_message", message };
+}
+
+function normalizeSystemReplySource(replyText) {
+  const normalized = normalizeLineEndings(String(replyText || "")).trim();
+  const unfenced = unwrapJsonCodeFence(normalized);
+  if (unfenced) {
+    return {
+      text: unfenced.replace(/^json\s*:\s*/i, "").trim(),
+      requiresStructuredAction: true,
+    };
+  }
+  const strippedJsonPrefix = normalized.replace(/^json\s*:\s*/i, "").trim();
+  return {
+    text: strippedJsonPrefix,
+    requiresStructuredAction: strippedJsonPrefix !== normalized,
+  };
+}
+
+function resolvePlainTextSystemReply(replyText, policy) {
+  const message = sanitizePlainTextSystemReply(replyText, policy);
+  if (!message) {
+    return { kind: "invalid", reason: "plain text system reply is unsafe" };
+  }
+  return { kind: "send_message", message };
+}
+
+function sanitizePlainTextSystemReply(replyText, policy) {
+  const normalized = trimOuterBlankLines(normalizeLineEndings(replyText));
+  if (!normalized) {
+    return "";
+  }
+  if (normalized.length > policy.maxPlainTextLength) {
+    return "";
+  }
+  if (normalized.split("\n").length > policy.maxPlainTextLines) {
+    return "";
+  }
+  if (containsPlainTextSystemHazard(normalized)) {
+    return "";
+  }
+  return sanitizeReplyText(normalized);
+}
+
+function containsPlainTextSystemHazard(text) {
+  const normalized = normalizeLineEndings(String(text || "")).trim();
+  if (!normalized) {
+    return true;
+  }
+  return /```/.test(normalized)
+    || /^\s*[\[{]/.test(normalized)
+    || /(?:^|\n)\s*(?:analysis|commentary|final)\s+to=/i.test(normalized)
+    || /\b(?:tool_use|tool_result|function_call|mcp__|exec_command|apply_patch|read_mcp_resource)\b/i.test(normalized)
+    || /(?:^|\n)\s*(?:\{|\[).*"(?:action|cyberboss_action|tool|toolName|tool_name)"\s*:/i.test(normalized);
+}
+
+function createSystemReplyPolicy(runtimeId) {
+  const normalizedRuntimeId = normalizeRuntimeId(runtimeId);
+  /*
+   * System/check-in turns are intentionally stricter than normal WeChat replies.
+   * The stable protocol is one JSON action object: {"action":"silent"} or
+   * {"action":"send_message","message":"..."}. JSON may be wrapped in a pure
+   * ```json fence or prefixed with "json:" because those are presentation
+   * wrappers around the same object, not alternate meanings.
+   *
+   * Codex must stay JSON-only: its streaming item protocol has historically been
+   * able to expose tool/protocol fragments as assistant text, so plain system
+   * text is not trusted. Claude Code is different in this bridge: tool use,
+   * thinking, and assistant text are non-deliverable events, and WeChat receives
+   * only the final result event. For claudecode only, a short natural final text
+   * with no code fence, JSON/action fragment, tool marker, or protocol marker is
+   * treated as send_message so random check-ins do not disappear when the model
+   * forgets the JSON wrapper.
+   */
+  return {
+    runtimeId: normalizedRuntimeId,
+    allowPlainTextSendMessage: normalizedRuntimeId === "claudecode",
+    maxPlainTextLength: 280,
+    maxPlainTextLines: 3,
+  };
 }
 
 function classifyReplyItemSourceText(replyText) {
@@ -806,6 +908,10 @@ function normalizeSystemActionName(value) {
     .trim()
     .toLowerCase()
     .replace(/\s+/g, "_");
+}
+
+function normalizeRuntimeId(value) {
+  return String(value || "").trim().toLowerCase();
 }
 
 function tryParseJson(value) {

@@ -69,7 +69,7 @@ function createClaudeCodeRuntimeAdapter(config) {
             if (pendingThreadId) {
               if (pendingThreadId === normalizeThreadId(event.sessionId)) {
                 sessionStore.setThreadIdForWorkspace(binding.bindingKey, workspaceRoot, event.sessionId);
-                sessionStore.clearPendingThreadIdForWorkspace(binding.bindingKey, workspaceRoot);
+                sessionStore.clearThreadIdForWorkspace(binding.bindingKey, workspaceRoot);
               }
             } else {
               sessionStore.setThreadIdForWorkspace(binding.bindingKey, workspaceRoot, event.sessionId);
@@ -192,7 +192,7 @@ function createClaudeCodeRuntimeAdapter(config) {
     async startFreshThreadDraft({ workspaceRoot }) {
       for (const binding of sessionStore.listBindings()) {
         if (binding.activeWorkspaceRoot === workspaceRoot) {
-          sessionStore.clearPendingThreadIdForWorkspace(binding.bindingKey, workspaceRoot);
+          sessionStore.clearThreadIdForWorkspace(binding.bindingKey, workspaceRoot);
         }
       }
       await closeWorkspaceClient(workspaceRoot);
@@ -266,14 +266,14 @@ function createClaudeCodeRuntimeAdapter(config) {
           throw error;
         }
         sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
-        sessionStore.clearPendingThreadIdForWorkspace(bindingKey, workspaceRoot);
+        sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
         threadId = "";
         openingTurn = true;
         attached = await attachClientToThread(workspaceRoot, "");
       }
       const { client, threadId: activeThreadId } = attached;
       const outboundText = openingTurn ? buildOpeningTurnText(config, text) : text;
-      const outboundThreadId = activeThreadId || threadId || `pending-${Date.now()}`;
+      let outboundThreadId = activeThreadId || threadId || `pending-${Date.now()}`;
       console.log(
         `[claudecode-runtime] sendTextTurn workspace=${workspaceRoot} opening=${openingTurn} requestedThread=${threadId || "(new)"} outboundThread=${outboundThreadId}`
       );
@@ -282,11 +282,20 @@ function createClaudeCodeRuntimeAdapter(config) {
         const confirmedSessionId = normalizeThreadId(
           client.sessionId || await client.waitForSessionId({ timeoutMs: CLAUDE_RESUME_SESSION_TIMEOUT_MS })
         );
-        if (confirmedSessionId !== normalizeThreadId(outboundThreadId)) {
+        
+        // 💡 增加判断：如果当前 outboundThreadId 是以 'pending-' 开头的临时ID，就不应该作为“不匹配”来报错
+        const isPending = String(outboundThreadId).startsWith('pending-');
+
+        if (!isPending && confirmedSessionId !== normalizeThreadId(outboundThreadId)) {
           await closeWorkspaceClient(workspaceRoot);
           sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
-          sessionStore.clearPendingThreadIdForWorkspace(bindingKey, workspaceRoot);
+          sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
           throw new Error(`claudecode resumed unexpected session id: ${confirmedSessionId || "(empty)"}`);
+        }
+        
+        // 💡 如果是临时 ID，通过了上面的校验后，为了防止后续逻辑混乱，把 outboundThreadId 更新为真正的 session ID
+        if (isPending && confirmedSessionId) {
+          outboundThreadId = confirmedSessionId;
         }
       }
       sessionStore.setThreadIdForWorkspace(
