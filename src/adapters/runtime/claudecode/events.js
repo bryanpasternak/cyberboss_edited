@@ -27,7 +27,7 @@ function mapClaudeCodeMessageToRuntimeEvent(message, raw) {
         payload: {
           threadId: message.sessionId,
           turnId: message.turnId,
-          itemId: `item-${message.turnId}`,
+          itemId: buildReplyItemId(message),
           text: message.text,
         },
       };
@@ -142,6 +142,16 @@ function normalizeString(value) {
 
 function numberOrZero(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function buildReplyItemId(message) {
+  const messageId = typeof message?.messageId === "string" ? message.messageId.trim() : "";
+  const textIndex = Number.isFinite(Number(message?.textIndex)) ? Number(message.textIndex) : 0;
+  if (messageId) {
+    return `text-${messageId}-${textIndex}`;
+  }
+  const turnId = typeof message?.turnId === "string" ? message.turnId.trim() : "";
+  return `text-${turnId || "unknown"}-${textIndex}`;
 }
 
 module.exports = { mapClaudeCodeMessageToRuntimeEvent };

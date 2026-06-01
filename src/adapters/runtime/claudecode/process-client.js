@@ -171,6 +171,8 @@ class ClaudeCodeProcessClient {
     }
     const content = raw?.message?.content;
     if (!Array.isArray(content)) return;
+    const messageId = typeof raw?.message?.id === "string" ? raw.message.id : "";
+    let textIndex = 0;
     for (const item of content) {
       if (!item || typeof item !== "object") continue;
       const itemType = item.type;
@@ -180,7 +182,10 @@ class ClaudeCodeProcessClient {
           text: item.text.trim(),
           turnId: this.pendingTurnId,
           sessionId: this.activeThreadId || this.sessionId,
+          messageId,
+          textIndex,
         }, raw);
+        textIndex += 1;
       } else if (itemType === "tool_use") {
         const toolName = typeof item.name === "string" ? item.name : "";
         if (toolName === "AskUserQuestion") continue;

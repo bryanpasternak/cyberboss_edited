@@ -277,11 +277,37 @@ function createClaudeCodeRuntimeAdapter(config) {
       console.log(
         `[claudecode-runtime] sendTextTurn workspace=${workspaceRoot} opening=${openingTurn} requestedThread=${threadId || "(new)"} outboundThread=${outboundThreadId}`
       );
-      await client.sendUserMessage({ text: outboundText, threadId: outboundThreadId });
+
+      // ========================================================
+      // 👈 最后一公里核心拦截注入点开始
+      // ========================================================
+      let finalText = outboundText;
+      try {
+        // 1. 引入 Node.js 原生的路径拼接模块
+        const path = require('path');
+        
+        // 2. 动态定位到项目根目录下的 vibe_system/vibe_middleware
+        const middlewarePath = path.join(process.cwd(), 'vibe_system', 'vibe_middleware');
+        
+        // 3. 动态 require 引入
+        const { getVibeInjection } = require(middlewarePath);
+        
+        const vibeAddon = getVibeInjection();
+        finalText = outboundText + vibeAddon;
+      } catch (err) {
+        console.error("[VibePlugin Error] 中间件加载或执行失败:", err);
+      }
+      // ========================================================
+
+      // 👈 将原本投喂的 outboundText 修改为追加了外设提示词的 finalText
+      await client.sendUserMessage({ text: finalText, threadId: outboundThreadId });
+
       if (!openingTurn) {
         const confirmedSessionId = normalizeThreadId(
           client.sessionId || await client.waitForSessionId({ timeoutMs: CLAUDE_RESUME_SESSION_TIMEOUT_MS })
         );
+      
+      
         
         // 💡 增加判断：如果当前 outboundThreadId 是以 'pending-' 开头的临时ID，就不应该作为“不匹配”来报错
         const isPending = String(outboundThreadId).startsWith('pending-');
