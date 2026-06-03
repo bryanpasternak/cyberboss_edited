@@ -1,8 +1,8 @@
 {
-    "mode": "off",
-    "speed": 3,
-    "comfort": 0.0,
+    "mode": "cum",
+    "speed": 0,
+    "comfort": 16.0,
     "locked": false,
     "active": false,
-    "lastTick": 1780241424.6038356
+    "lastTick": 1780463118.444006
 }

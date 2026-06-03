@@ -993,6 +993,9 @@ class CyberbossApp {
       case "help":
         await this.handleHelpCommand(normalized);
         return;
+      case "memory":
+        await this.handleMemoryCommand(normalized, command);
+        return;
       default:
         await this.channelAdapter.sendText({
           userId: normalized.senderId,
@@ -1000,6 +1003,27 @@ class CyberbossApp {
           contextToken: normalized.contextToken,
         });
     }
+  }
+
+  async handleMemoryCommand(normalized, command) {
+    const { handleMemoryCommand } = require("./memory-commands");
+    const args = typeof command?.args === "string" ? command.args.trim() : "";
+    const fullText = args ? `/memory ${args}` : "/memory";
+    let reply;
+    try {
+      reply = await handleMemoryCommand({ text: fullText });
+    } catch (err) {
+      console.error("[Memory Command] 执行失败:", err.message);
+      reply = `❌ 记忆命令执行失败: ${err.message}`;
+    }
+    if (!reply) {
+      reply = "未知 memory 命令。输入 /memory help 查看帮助。";
+    }
+    await this.channelAdapter.sendText({
+      userId: normalized.senderId,
+      text: reply,
+      contextToken: normalized.contextToken,
+    });
   }
 
   async handleBindCommand(normalized, command) {

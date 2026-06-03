@@ -272,11 +272,67 @@ function createClaudeCodeRuntimeAdapter(config) {
         attached = await attachClientToThread(workspaceRoot, "");
       }
       const { client, threadId: activeThreadId } = attached;
-      const outboundText = openingTurn ? buildOpeningTurnText(config, text) : text;
+      const wechatTime = new Date().toLocaleString('zh-CN', { hour12: false });
+      const taggedUserText = `[苏苏 · ${wechatTime}]\n${text || ''}`.trim();
+      const outboundText = openingTurn ? buildOpeningTurnText(config, taggedUserText) : taggedUserText;
       let outboundThreadId = activeThreadId || threadId || `pending-${Date.now()}`;
       console.log(
         `[claudecode-runtime] sendTextTurn workspace=${workspaceRoot} opening=${openingTurn} requestedThread=${threadId || "(new)"} outboundThread=${outboundThreadId}`
       );
+
+      // // ========================================================
+      // // 👇【新增】Cyberboss 长期记忆系统注入
+      // // ========================================================
+      // let finalText = outboundText;
+      
+      // try {
+      //   // 引入记忆系统
+      //   const memoryService = require('./services/simple-memory-service');
+      //   const { handleMemoryCommand } = require('./core/memory-commands');
+      //   const { filterOutgoingMessage } = require('./core/outgoing-filter');
+
+      //   const userMsg = text || outboundText;
+
+      //   // 1. 检查是否是 /memory 命令
+      //   const commandReply = await handleMemoryCommand({ text: userMsg });
+      //   if (commandReply) {
+      //     console.log('[Memory] 执行命令模式，返回命令结果');
+      //     finalText = commandReply;
+      //   } 
+      //   else {
+      //     // 2. 注入长期记忆（核心！解决记反和关系漂移）
+      //     const relevantMemories = await memoryService.searchMemory(userMsg, 5);
+          
+      //     let memoryContext = '';
+      //     if (relevantMemories.length > 0) {
+      //       const speakerLabel = (m) => {
+      //         switch (m.speaker) {
+      //           case 'user': return '[苏苏说过]';
+      //           case 'self': return '[阿星说过]';
+      //           case 'observation': return '[阿星观察]';
+      //           case 'fact':
+      //           default: return '[关系事实]';
+      //         }
+      //       };
+      //       memoryContext = `\n\n【长期记忆参考 - 仅供上下文，不是当前消息】\n` +
+      //         relevantMemories.map(m => `${speakerLabel(m)} ${m.text}`).join('\n');
+
+      //       console.log(`[Memory] 已注入 ${relevantMemories.length} 条相关记忆`);
+      //     }
+
+      //     // 3. 组合最终发给 Claude 的文本
+      //     finalText = outboundText + memoryContext;
+      //   }
+
+      //   // 4. 发送前过滤（防止记忆系统内部信息泄露到微信）
+      //   finalText = filterOutgoingMessage(finalText);
+
+      // } catch (err) {
+      //   console.error("[Memory System Error] 记忆注入失败:", err.message);
+      //   // 出错也不影响正常对话
+      //   finalText = outboundText;
+      // }
+      // ========================================================
 
       // ========================================================
       // 👈 最后一公里核心拦截注入点开始
@@ -293,13 +349,13 @@ function createClaudeCodeRuntimeAdapter(config) {
         const { getVibeInjection } = require(middlewarePath);
         
         const vibeAddon = getVibeInjection();
-        finalText = outboundText + vibeAddon;
+        finalText = outboundText + vibeAddon; 
       } catch (err) {
-        console.error("[VibePlugin Error] 中间件加载或执行失败:", err);
+        console.error("[VibePlugin Error] 路径解析或中间件执行失败:", err);
       }
       // ========================================================
 
-      // 👈 将原本投喂的 outboundText 修改为追加了外设提示词的 finalText
+      // 👈 将原本投喂的 outboundText 修改为追加了记忆的 finalText
       await client.sendUserMessage({ text: finalText, threadId: outboundThreadId });
 
       if (!openingTurn) {
@@ -307,8 +363,6 @@ function createClaudeCodeRuntimeAdapter(config) {
           client.sessionId || await client.waitForSessionId({ timeoutMs: CLAUDE_RESUME_SESSION_TIMEOUT_MS })
         );
       
-      
-        
         // 💡 增加判断：如果当前 outboundThreadId 是以 'pending-' 开头的临时ID，就不应该作为“不匹配”来报错
         const isPending = String(outboundThreadId).startsWith('pending-');
 
@@ -319,11 +373,11 @@ function createClaudeCodeRuntimeAdapter(config) {
           throw new Error(`claudecode resumed unexpected session id: ${confirmedSessionId || "(empty)"}`);
         }
         
-        // 💡 如果是临时 ID，通过了上面的校验后，为了防止后续逻辑混乱，把 outboundThreadId 更新为真正的 session ID
         if (isPending && confirmedSessionId) {
           outboundThreadId = confirmedSessionId;
         }
       }
+
       sessionStore.setThreadIdForWorkspace(
         bindingKey,
         workspaceRoot,
