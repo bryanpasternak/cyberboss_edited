@@ -1,9 +1,6 @@
 const fs = require("fs");
 const path = require("path");
 const { spawn } = require("child_process");
-const os = require("os");
-
-const IS_WINDOWS = os.platform() === "win32";
 
 function createTimelineIntegration(config) {
   const binPath = resolveTimelineBinPath();
@@ -41,14 +38,14 @@ function resolveTimelineBinPath() {
 
 function runTimelineCommand(binPath, args, extraEnv = {}, options = {}) {
   return new Promise((resolve, reject) => {
-    const spawnSpec = buildTimelineSpawnSpec(binPath, args);
-    const child = spawn(spawnSpec.command, spawnSpec.args, {
+    const child = spawn(process.execPath, [binPath, ...args], {
       stdio: ["inherit", "pipe", "pipe"],
       env: {
         ...process.env,
         ...extraEnv,
       },
       shell: false,
+      windowsHide: true,
     });
 
     let stdout = "";
@@ -127,34 +124,10 @@ function runTimelineCommand(binPath, args, extraEnv = {}, options = {}) {
 }
 
 function buildTimelineSpawnSpec(binPath, args = []) {
-  if (IS_WINDOWS) {
-    return {
-      command: "cmd.exe",
-      args: ["/d", "/s", "/c", buildWindowsNodeCommand(process.execPath, binPath, args)],
-    };
-  }
-
   return {
     command: process.execPath,
     args: [binPath, ...args],
   };
-}
-
-function buildWindowsNodeCommand(nodePath, binPath, args = []) {
-  const commandParts = [nodePath, binPath, ...args].map(quoteWindowsCmdArg);
-  return commandParts.join(" ");
-}
-
-function quoteWindowsCmdArg(value) {
-  const text = String(value ?? "");
-  if (!text.length) {
-    return "\"\"";
-  }
-  if (!/[\s"]/u.test(text)) {
-    return text;
-  }
-  const escaped = text.replace(/(\\*)"/g, "$1$1\\\"");
-  return `"${escaped.replace(/(\\+)$/g, "$1$1")}"`;
 }
 
 function normalizeArgs(args) {
