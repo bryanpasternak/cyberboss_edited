@@ -53,6 +53,7 @@ const { createProjectTooling } = require("../tools/create-project-tooling");
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
 const SESSION_EXPIRED_ERRCODE = -14;
+const DEFAULT_MAX_MIN_CHUNK = MAX_MIN_WEIXIN_CHUNK;
 const RETRY_DELAY_MS = 2_000;
 const BACKOFF_DELAY_MS = 30_000;
 const MAX_CONSECUTIVE_FAILURES = 3;
@@ -831,6 +832,16 @@ class CyberbossApp {
     return this.pendingInboundByScope.has(buildScopeKey(bindingKey, workspaceRoot));
   }
 
+  clearPendingInboundForScope(bindingKey, workspaceRoot) {
+    const scopeKey = buildScopeKey(bindingKey, workspaceRoot);
+    if (!scopeKey) {
+      return;
+    }
+    this.pendingInboundByScope.delete(scopeKey);
+    this.clearPendingImageInboundTimer(scopeKey);
+    this.pendingImageInboundByScope.delete(scopeKey);
+  }
+
   async flushPendingInboundMessages({ bindingKey = "", workspaceRoot = "", ignoreBoundary = false } = {}) {
     const targetScopeKey = buildScopeKey(bindingKey, workspaceRoot);
     const scopeEntries = targetScopeKey
@@ -1405,10 +1416,23 @@ class CyberbossApp {
       senderId: normalized.senderId,
     });
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
+    const sessionStore = this.runtimeAdapter.getSessionStore();
+    const previousThreadId = sessionStore.getThreadIdForWorkspace(bindingKey, workspaceRoot);
     if (typeof this.runtimeAdapter.startFreshThreadDraft === "function") {
       await this.runtimeAdapter.startFreshThreadDraft({ bindingKey, workspaceRoot });
     }
-    this.runtimeAdapter.getSessionStore().clearThreadIdForWorkspace(bindingKey, workspaceRoot);
+    sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
+    this.clearPendingInboundForScope(bindingKey, workspaceRoot);
+    this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
+    if (previousThreadId) {
+      this.threadStateStore.applyRuntimeEvent({
+        type: "runtime.turn.completed",
+        payload: {
+          threadId: previousThreadId,
+          turnId: "",
+        },
+      });
+    }
     await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Switched to a fresh thread draft\nworkspace: ${workspaceRoot}`,
@@ -1610,20 +1634,21 @@ class CyberbossApp {
 
   async handleChunkCommand(normalized, command) {
     const arg = normalizeCommandArgument(command.args);
+    const maxChunk = resolveChannelMaxChunkChars(this.currentChannel);
     if (!arg) {
       const current = this.currentChannel.getMinChunkChars?.() ?? DEFAULT_MIN_WEIXIN_CHUNK;
       await this.currentChannel.sendText({
         userId: normalized.senderId,
-        text: `💡 Current minimum merge chunk is ${current} characters. Usage: /chunk <number> (e.g. /chunk 50)`,
+        text: `💡 Current minimum merge chunk is ${current} characters. Usage: /chunk <number> (1-${maxChunk}, e.g. /chunk 50)`,
         contextToken: normalized.contextToken,
       });
       return;
     }
     const parsed = Number.parseInt(arg, 10);
-    if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_MIN_WEIXIN_CHUNK) {
+    if (!Number.isFinite(parsed) || parsed < 1 || parsed > maxChunk) {
       await this.currentChannel.sendText({
         userId: normalized.senderId,
-        text: `⚠️  Invalid value. Please provide a number between 1 and ${MAX_MIN_WEIXIN_CHUNK}.`,
+        text: `⚠️  Invalid value. Please provide a number between 1 and ${maxChunk}.`,
         contextToken: normalized.contextToken,
       });
       return;
@@ -2305,6 +2330,15 @@ function isPathWithinAllowedDirectories(rawPath) {
 
 function normalizeCommandArgument(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function resolveChannelMaxChunkChars(channel) {
+  const value = typeof channel?.getMaxChunkChars === "function"
+    ? Number(channel.getMaxChunkChars())
+    : DEFAULT_MAX_MIN_CHUNK;
+  return Number.isFinite(value) && value >= 1
+    ? Math.floor(value)
+    : DEFAULT_MAX_MIN_CHUNK;
 }
 
 function normalizeThreadId(value) {

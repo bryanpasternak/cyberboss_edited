@@ -5,6 +5,17 @@ const { runTelegramLoginFlow } = require("./login");
 const { createInboundFilter } = require("./message-utils");
 const { TelegramOffsetStore } = require("./offset-store");
 const {
+  collectStreamingBoundaries,
+  splitTextAtBoundaries,
+  trimOuterBlankLines,
+} = require("../weixin");
+const {
+  DEFAULT_MIN_TELEGRAM_CHUNK,
+  MAX_MIN_TELEGRAM_CHUNK,
+  loadTelegramConfig,
+  saveTelegramConfig,
+} = require("./config-store");
+const {
   getUpdates,
   sendChatAction,
   sendDocument,
@@ -20,6 +31,7 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
   let selectedAccount = null;
   const inboundFilter = createInboundFilter();
   const offsetStore = new TelegramOffsetStore({ filePath: config.telegramOffsetFile });
+  let minTelegramChunk = loadTelegramConfig(config).minChunkChars;
 
   function ensureAccount() {
     if (!selectedAccount) {
@@ -38,7 +50,9 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
     if (!content.trim()) {
       return;
     }
-    const chunks = preserveBlock ? [content] : splitForTelegram(content, MAX_TELEGRAM_TEXT_BYTES);
+    const chunks = preserveBlock
+      ? splitForTelegram(content, MAX_TELEGRAM_TEXT_BYTES)
+      : chunkReplyTextForTelegram(content, minTelegramChunk);
     for (let index = 0; index < chunks.length; index += 1) {
       const chunk = chunks[index];
       await sendMessage({
@@ -82,7 +96,7 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
           showThinking: config.telegramShowThinking !== false,
           supportsTyping: true,
           supportsAttachments: true,
-          supportsChunkConfig: false,
+          supportsChunkConfig: true,
           supportsHtml: true,
         },
       };
@@ -194,11 +208,19 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
         fileName,
       });
     },
-    setMinChunkChars() {
-      return MAX_TELEGRAM_TEXT_BYTES;
+    setMinChunkChars(value) {
+      const parsed = Number.parseInt(String(value), 10);
+      if (Number.isFinite(parsed) && parsed >= 1 && parsed <= MAX_MIN_TELEGRAM_CHUNK) {
+        minTelegramChunk = parsed;
+        saveTelegramConfig(config, { minChunkChars: minTelegramChunk });
+      }
+      return minTelegramChunk;
     },
     getMinChunkChars() {
-      return MAX_TELEGRAM_TEXT_BYTES;
+      return minTelegramChunk;
+    },
+    getMaxChunkChars() {
+      return MAX_MIN_TELEGRAM_CHUNK;
     },
   };
 
@@ -209,6 +231,63 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
       return null;
     }
   }
+}
+
+function normalizeTelegramReplyText(text) {
+  return trimOuterBlankLines(String(text || "").replace(/\r\n/g, "\n"));
+}
+
+function chunkReplyTextForTelegram(text, minChunk = DEFAULT_MIN_TELEGRAM_CHUNK) {
+  const normalized = normalizeTelegramReplyText(text);
+  if (!normalized.trim()) {
+    return [];
+  }
+
+  const boundaries = collectStreamingBoundaries(normalized);
+  const naturalUnits = boundaries.length
+    ? splitTextAtBoundaries(normalized, boundaries)
+    : [normalized];
+  const safeUnits = [];
+  for (const unit of naturalUnits.length ? naturalUnits : [normalized]) {
+    if (Buffer.byteLength(unit, "utf8") <= MAX_TELEGRAM_TEXT_BYTES) {
+      safeUnits.push(unit);
+      continue;
+    }
+    safeUnits.push(...splitForTelegram(unit, MAX_TELEGRAM_TEXT_BYTES));
+  }
+  return mergeTelegramShortChunks(
+    safeUnits.filter((chunk) => String(chunk || "").trim()),
+    MAX_TELEGRAM_TEXT_BYTES,
+    minChunk,
+  );
+}
+
+function mergeTelegramShortChunks(chunks, maxBytes, minLength) {
+  const normalizedChunks = Array.isArray(chunks)
+    ? chunks.map((chunk) => String(chunk || "")).filter((chunk) => chunk.trim())
+    : [];
+  if (!normalizedChunks.length) {
+    return [];
+  }
+
+  const merged = [];
+  let buffer = normalizedChunks[0];
+  for (let index = 1; index < normalizedChunks.length; index += 1) {
+    const chunk = normalizedChunks[index];
+    const joined = `${buffer}${chunk}`;
+    const isShort = buffer.length < minLength && chunk.length < minLength;
+    if (isShort && Buffer.byteLength(joined, "utf8") <= maxBytes) {
+      buffer = joined;
+      continue;
+    }
+    merged.push(buffer);
+    buffer = chunk;
+  }
+  if (buffer) {
+    merged.push(buffer);
+  }
+
+  return merged.flatMap((chunk) => splitForTelegram(chunk, maxBytes)).filter(Boolean);
 }
 
 function splitForTelegram(text, maxLength) {
@@ -273,4 +352,11 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-module.exports = { createTelegramChannelAdapter };
+module.exports = {
+  createTelegramChannelAdapter,
+  normalizeTelegramReplyText,
+  chunkReplyTextForTelegram,
+  mergeTelegramShortChunks,
+  splitForTelegram,
+  sliceUtf8,
+};

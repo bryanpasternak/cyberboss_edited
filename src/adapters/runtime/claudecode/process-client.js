@@ -227,9 +227,17 @@ class ClaudeCodeProcessClient {
   }
 
   handleResult(raw) {
+    const previousSessionId = this.sessionId;
     if (raw.session_id) {
+      if (isPendingThreadId(this.activeThreadId)) {
+        this.activeThreadId = raw.session_id;
+      }
       this.sessionId = raw.session_id;
       this.resumeSessionId = "";
+      if (!previousSessionId) {
+        this.resolveSessionWaiters(raw.session_id);
+        this.emit({ type: "session.id", sessionId: raw.session_id }, raw);
+      }
     }
     console.log(
       `[claudecode-runtime] turn.completed workspace=${this.workspaceRoot} session=${this.activeThreadId || this.sessionId || "(empty)"} turn=${this.pendingTurnId || "(empty)"}`

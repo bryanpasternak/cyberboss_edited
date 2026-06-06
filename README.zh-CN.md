@@ -212,6 +212,8 @@ CYBERBOSS_LOCATION_BATTERY_HISTORY_LIMIT=100
   单张图片 caption 请求超时时间。
 - `CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS`
   设置微信短分片合并阈值默认值。
+- `CYBERBOSS_TELEGRAM_MIN_CHUNK_CHARS`
+  设置 Telegram 短分片合并阈值默认值。
 - `CYBERBOSS_WEIXIN_BASE_URL`、`CYBERBOSS_WEIXIN_CDN_BASE_URL`、`CYBERBOSS_WEIXIN_QR_BOT_TYPE`
   在特殊部署环境下覆盖微信桥接接口地址和二维码 bot 类型。
 - `CYBERBOSS_ENABLE_LOCATION_SERVER`
@@ -310,7 +312,7 @@ model_catalog_json = "/绝对路径/.codex/local-models.json"
 - `/checkin <min>-<max>`
   调整当前项目的随机 checkin 区间
 - `/chunk <number>`
-  调整微信短回复的最小合并字符数
+  调整当前聊天渠道短回复的最小合并字符数
 - `/yes`
   允许当前待处理授权一次
 - `/always`
@@ -322,9 +324,9 @@ model_catalog_json = "/绝对路径/.codex/local-models.json"
 - `/model <id>`
   切换模型
 - `/star`
-  在微信里查看 GitHub star 引导
+  查看 GitHub star 引导
 - `/help`
-  查看微信内命令帮助
+  查看命令帮助
 
 普通文本消息会直接发送到当前绑定线程。如果当前还没绑定项目，先执行：
 

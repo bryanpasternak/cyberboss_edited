@@ -17,6 +17,83 @@ test("turn gate tracks pending scopes until the turn is released", () => {
   assert.equal(gate.isPending("binding-1", "/workspace"), false);
 });
 
+test("turn gate releaseScope also detaches linked threads", () => {
+  const gate = new TurnGateStore();
+  const scopeKey = gate.begin("binding-1", "/workspace");
+  gate.attachThread(scopeKey, "thread-1");
+
+  gate.releaseScope("binding-1", "/workspace");
+  gate.releaseThread("thread-1");
+
+  assert.equal(gate.isPending("binding-1", "/workspace"), false);
+  assert.equal(gate.scopeByThreadId.has("thread-1"), false);
+});
+
+test("handleNewCommand clears local blockers for the current scope", async () => {
+  const sent = [];
+  const gate = new TurnGateStore();
+  const scopeKey = gate.begin("binding-1", "/workspace");
+  gate.attachThread(scopeKey, "thread-1");
+  const pendingInboundByScope = new Map([[scopeKey, {
+    bindingKey: "binding-1",
+    workspaceRoot: "/workspace",
+    messages: [{ text: "queued" }],
+  }]]);
+  const pendingImageInboundByScope = new Map([[scopeKey, {
+    bindingKey: "binding-1",
+    workspaceRoot: "/workspace",
+    messages: [{ text: "image" }],
+    timer: null,
+  }]]);
+  const appLike = {
+    runtimeAdapter: {
+      getSessionStore() {
+        return {
+          buildBindingKey() {
+            return "binding-1";
+          },
+          getThreadIdForWorkspace() {
+            return "thread-1";
+          },
+          clearThreadIdForWorkspace() {},
+        };
+      },
+    },
+    threadStateStore: {
+      events: [],
+      applyRuntimeEvent(event) {
+        this.events.push(event);
+      },
+    },
+    turnGateStore: gate,
+    pendingInboundByScope,
+    pendingImageInboundByScope,
+    currentChannel: {
+      async sendText(payload) {
+        sent.push(payload);
+      },
+    },
+    resolveWorkspaceRoot() {
+      return "/workspace";
+    },
+    clearPendingImageInboundTimer: CyberbossApp.prototype.clearPendingImageInboundTimer,
+    clearPendingInboundForScope: CyberbossApp.prototype.clearPendingInboundForScope,
+  };
+
+  await CyberbossApp.prototype.handleNewCommand.call(appLike, {
+    workspaceId: "default",
+    accountId: "acc-1",
+    senderId: "user-1",
+    contextToken: "ctx-1",
+  });
+
+  assert.equal(gate.isPending("binding-1", "/workspace"), false);
+  assert.equal(pendingInboundByScope.has(scopeKey), false);
+  assert.equal(pendingImageInboundByScope.has(scopeKey), false);
+  assert.equal(appLike.threadStateStore.events[0].type, "runtime.turn.completed");
+  assert.equal(sent.length, 1);
+});
+
 test("handlePreparedMessage queues a normal inbound message while the scope is busy", async () => {
   const queued = [];
   let dispatched = false;
@@ -48,6 +125,15 @@ test("handlePreparedMessage queues a normal inbound message while the scope is b
       setReplyTarget() {},
     },
     pendingInboundByScope: new Map(),
+    channelAdapter: {
+      async sendTyping() {},
+    },
+    resolveChannelById() {
+      return null;
+    },
+    resolveChannelForSender() {
+      return this.channelAdapter;
+    },
     hasPendingImageInbound() {
       return false;
     },
@@ -105,6 +191,9 @@ test("dispatchSystemMessage yields when a local pending turn already owns the wo
       getKnownContextTokens() {
         return { "user-1": "ctx-1" };
       },
+    },
+    resolveChannelForSender() {
+      return this.channelAdapter;
     },
     runtimeAdapter: {
       getSessionStore() {
@@ -179,6 +268,15 @@ test("handlePreparedMessage queues while the scope is in a turn-boundary handoff
       setReplyTarget() {},
     },
     pendingInboundByScope: new Map(),
+    channelAdapter: {
+      async sendTyping() {},
+    },
+    resolveChannelById() {
+      return null;
+    },
+    resolveChannelForSender() {
+      return this.channelAdapter;
+    },
     hasPendingImageInbound() {
       return false;
     },
@@ -226,6 +324,12 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
         order.push("typing");
       },
       async sendText() {},
+    },
+    resolveChannelById() {
+      return null;
+    },
+    resolveChannelForSender() {
+      return this.channelAdapter;
     },
     turnGateStore: {
       begin() {
@@ -486,6 +590,12 @@ test("failed turns still send error back when thread binding lookup is missing",
       async sendText(payload) {
         sent.push(payload);
       },
+    },
+    resolveChannelById() {
+      return null;
+    },
+    resolveChannelForSender() {
+      return this.channelAdapter;
     },
     async sendFailureToThread(threadId, text, fallbackTarget) {
       return CyberbossApp.prototype.sendFailureToThread.call(this, threadId, text, fallbackTarget);

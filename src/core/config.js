@@ -24,6 +24,7 @@ function readConfig() {
     telegramBotToken: readTextEnv("CYBERBOSS_TELEGRAM_BOT_TOKEN"),
     telegramAllowedChatIds: readListEnv("CYBERBOSS_TELEGRAM_ALLOWED_CHAT_IDS"),
     telegramShowThinking: readOptionalBoolEnv("CYBERBOSS_TELEGRAM_SHOW_THINKING") !== false,
+    telegramMinChunkChars: readIntEnv("CYBERBOSS_TELEGRAM_MIN_CHUNK_CHARS"),
     telegramConfigFile: path.join(stateDir, "telegram-config.json"),
     telegramOffsetFile: path.join(stateDir, "telegram-offset.json"),
     runtime: readTextEnv("CYBERBOSS_RUNTIME") || "codex",

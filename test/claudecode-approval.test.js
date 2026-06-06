@@ -154,16 +154,16 @@ test("claudecode assistant events map usage into context snapshots", () => {
 });
 
 test("claudecode adapter dispatches turns only after a real session id is available", async () => {
-  const tempDir = fs.mkdtempSync(path.join("/tmp", "cb-claude-"));
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cb-claude-"));
   const workspaceRoot = path.join(tempDir, "workspace");
   const stateDir = path.join(tempDir, "state");
   fs.mkdirSync(workspaceRoot, { recursive: true });
   fs.mkdirSync(stateDir, { recursive: true });
   const captureFile = path.join(tempDir, "stdin.log");
-  const commandFile = path.join(tempDir, "fake-claude.js");
+  const scriptFile = path.join(tempDir, "fake-claude.js");
+  const commandFile = path.join(tempDir, "fake-claude.cmd");
   const sessionId = "11111111-1111-4111-8111-111111111111";
-  fs.writeFileSync(commandFile, [
-    "#!/usr/bin/env node",
+  fs.writeFileSync(scriptFile, [
     `const fs = require("node:fs");`,
     "process.stdin.on(\"data\", (chunk) => {",
     `  fs.appendFileSync(${JSON.stringify(captureFile)}, chunk);`,
@@ -171,6 +171,7 @@ test("claudecode adapter dispatches turns only after a real session id is availa
     "  process.exit(0);",
     "});",
   ].join("\n"));
+  fs.writeFileSync(commandFile, `@echo off\r\nnode "${scriptFile}" %*\r\n`);
   fs.chmodSync(commandFile, 0o755);
 
   const adapter = createClaudeCodeRuntimeAdapter({
@@ -202,6 +203,57 @@ test("claudecode adapter dispatches turns only after a real session id is availa
     });
     assert.doesNotMatch(turn.threadId, /^pending-/);
     assert.match(await waitForFileText(captureFile, /hello/), /hello/);
+  } finally {
+    await adapter.close();
+  }
+});
+
+test("claudecode adapter does not persist pending thread ids after a fresh draft", async () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cb-claude-fresh-"));
+  const workspaceRoot = path.join(tempDir, "workspace");
+  const stateDir = path.join(tempDir, "state");
+  fs.mkdirSync(workspaceRoot, { recursive: true });
+  fs.mkdirSync(stateDir, { recursive: true });
+  const scriptFile = path.join(tempDir, "fake-claude.js");
+  const commandFile = path.join(tempDir, "fake-claude.cmd");
+  const sessionId = "22222222-2222-4222-8222-222222222222";
+  fs.writeFileSync(scriptFile, [
+    "process.stdin.on(\"data\", () => {",
+    `  console.log(JSON.stringify({ type: "system", session_id: ${JSON.stringify(sessionId)} }));`,
+    `  console.log(JSON.stringify({ type: "result", session_id: ${JSON.stringify(sessionId)}, result: "ok" }));`,
+    "  process.exit(0);",
+    "});",
+  ].join("\n"));
+  fs.writeFileSync(commandFile, `@echo off\r\nnode "${scriptFile}" %*\r\n`);
+  fs.chmodSync(commandFile, 0o755);
+
+  const adapter = createClaudeCodeRuntimeAdapter({
+    stateDir,
+    sessionsFile: path.join(tempDir, "sessions.json"),
+    claudeCommand: commandFile,
+    claudePermissionMode: "default",
+    claudeDisableVerbose: true,
+    claudeExtraArgs: [],
+  });
+  const sessionStore = adapter.getSessionStore();
+  sessionStore.setThreadIdForWorkspace("binding-1", workspaceRoot, "old-thread", { senderId: "user-1" });
+
+  try {
+    await adapter.startFreshThreadDraft({ bindingKey: "binding-1", workspaceRoot });
+    assert.equal(sessionStore.getThreadIdForWorkspace("binding-1", workspaceRoot), "");
+
+    const turn = await adapter.sendTurn({
+      bindingKey: "binding-1",
+      workspaceRoot,
+      text: "hello after new",
+      metadata: {
+        senderId: "user-1",
+      },
+    });
+
+    assert.equal(turn.threadId, sessionId);
+    assert.doesNotMatch(turn.threadId, /^pending-/);
+    assert.equal(sessionStore.getThreadIdForWorkspace("binding-1", workspaceRoot), sessionId);
   } finally {
     await adapter.close();
   }
@@ -443,6 +495,9 @@ test("handleNewCommand asks runtime to start a fresh draft before clearing the s
           buildBindingKey() {
             return "binding-1";
           },
+          getThreadIdForWorkspace() {
+            return "";
+          },
           clearThreadIdForWorkspace(bindingKey, workspaceRoot) {
             calls.push(["clear", bindingKey, workspaceRoot]);
           },
@@ -453,6 +508,21 @@ test("handleNewCommand asks runtime to start a fresh draft before clearing the s
       async sendText(payload) {
         calls.push(["send", payload.text]);
       },
+    },
+    currentChannel: {
+      async sendText(payload) {
+        calls.push(["send", payload.text]);
+      },
+    },
+    pendingInboundByScope: new Map(),
+    pendingImageInboundByScope: new Map(),
+    clearPendingImageInboundTimer() {},
+    clearPendingInboundForScope: CyberbossApp.prototype.clearPendingInboundForScope,
+    turnGateStore: {
+      releaseScope() {},
+    },
+    threadStateStore: {
+      applyRuntimeEvent() {},
     },
   };
 

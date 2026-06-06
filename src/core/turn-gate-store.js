@@ -28,6 +28,11 @@ class TurnGateStore {
       return;
     }
     this.pendingScopeKeys.delete(scopeKey);
+    for (const [threadId, linkedScopeKey] of this.scopeByThreadId.entries()) {
+      if (linkedScopeKey === scopeKey) {
+        this.scopeByThreadId.delete(threadId);
+      }
+    }
   }
 
   releaseThread(threadId) {

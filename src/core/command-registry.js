@@ -147,10 +147,10 @@ const COMMAND_GROUPS = [
       },
       {
         action: "channel.chunk_min",
-        summary: "Adjust the minimum short-chunk merge size for WeChat replies",
+        summary: "Adjust the minimum short-chunk merge size for replies",
         terminal: [],
         weixin: ["/chunk <number>"],
-        telegram: [],
+        telegram: ["/chunk <number>"],
         status: "active",
       },
     ],

@@ -231,6 +231,9 @@ function createWeixinChannelAdapter(config) {
     getMinChunkChars() {
       return minWeixinChunk;
     },
+    getMaxChunkChars() {
+      return MAX_WEIXIN_CHUNK;
+    },
   };
 }
 

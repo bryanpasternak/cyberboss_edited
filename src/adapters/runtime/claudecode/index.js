@@ -63,17 +63,7 @@ function createClaudeCodeRuntimeAdapter(config) {
       if (event.type === "session.id") {
         for (const binding of sessionStore.listBindings()) {
           if (binding.activeWorkspaceRoot === workspaceRoot) {
-            const pendingThreadId = normalizeThreadId(
-              sessionStore.getPendingThreadIdForWorkspace(binding.bindingKey, workspaceRoot)
-            );
-            if (pendingThreadId) {
-              if (pendingThreadId === normalizeThreadId(event.sessionId)) {
-                sessionStore.setThreadIdForWorkspace(binding.bindingKey, workspaceRoot, event.sessionId);
-                sessionStore.clearThreadIdForWorkspace(binding.bindingKey, workspaceRoot);
-              }
-            } else {
-              sessionStore.setThreadIdForWorkspace(binding.bindingKey, workspaceRoot, event.sessionId);
-            }
+            sessionStore.setThreadIdForWorkspace(binding.bindingKey, workspaceRoot, event.sessionId);
           }
         }
         return;
@@ -252,7 +242,14 @@ function createClaudeCodeRuntimeAdapter(config) {
       await client.sendUserMessage({ text: refreshText, threadId: activeThreadId });
       return { threadId: activeThreadId };
     },
+    async sendTurn(args) {
+      return this.sendTextTurn(args);
+    },
     async sendTextTurn({ bindingKey, workspaceRoot, text, metadata = {}, model = "" }) {
+      sessionStore.setRuntimeParamsForWorkspace(bindingKey, workspaceRoot, {
+        model: typeof model === "string" ? model.trim() : "",
+        modelProvider: "",
+      });
       let threadId = sessionStore.getThreadIdForWorkspace(bindingKey, workspaceRoot);
       if (!threadId) {
         sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
@@ -358,25 +355,22 @@ function createClaudeCodeRuntimeAdapter(config) {
       // 👈 将原本投喂的 outboundText 修改为追加了记忆的 finalText
       await client.sendUserMessage({ text: finalText, threadId: outboundThreadId });
 
-      if (!openingTurn) {
-        const confirmedSessionId = normalizeThreadId(
-          client.sessionId || await client.waitForSessionId({ timeoutMs: CLAUDE_RESUME_SESSION_TIMEOUT_MS })
-        );
-      
-        // 💡 增加判断：如果当前 outboundThreadId 是以 'pending-' 开头的临时ID，就不应该作为“不匹配”来报错
-        const isPending = String(outboundThreadId).startsWith('pending-');
-
-        if (!isPending && confirmedSessionId !== normalizeThreadId(outboundThreadId)) {
-          await closeWorkspaceClient(workspaceRoot);
-          sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
-          sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
-          throw new Error(`claudecode resumed unexpected session id: ${confirmedSessionId || "(empty)"}`);
-        }
-        
-        if (isPending && confirmedSessionId) {
-          outboundThreadId = confirmedSessionId;
-        }
+      const confirmedSessionId = normalizeThreadId(
+        client.sessionId || await client.waitForSessionId({ timeoutMs: CLAUDE_RESUME_SESSION_TIMEOUT_MS })
+      );
+      if (!confirmedSessionId) {
+        await closeWorkspaceClient(workspaceRoot);
+        sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
+        throw new Error("claudecode did not report a session id");
       }
+
+      if (!openingTurn && confirmedSessionId !== normalizeThreadId(outboundThreadId)) {
+        await closeWorkspaceClient(workspaceRoot);
+        sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
+        throw new Error(`claudecode resumed unexpected session id: ${confirmedSessionId || "(empty)"}`);
+      }
+
+      outboundThreadId = confirmedSessionId;
 
       sessionStore.setThreadIdForWorkspace(
         bindingKey,

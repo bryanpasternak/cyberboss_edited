@@ -89,7 +89,7 @@ Notes:
 - Codex loads them through the runtime-side Cyberboss MCP bridge configured at spawn time.
 - The public human terminal surface stays intentionally small: lifecycle commands plus shared bridge scripts.
 
-## Current WeChat Commands
+## Current Chat Commands
 
 - `/bind`
 - `/status`

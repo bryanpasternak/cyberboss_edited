@@ -192,6 +192,8 @@ What these do:
   Reserve output tokens for Claude replies. `/status` subtracts this reserve from the configured Claude context window.
 - `CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS`
   Set the default minimum merge size for short WeChat reply chunks.
+- `CYBERBOSS_TELEGRAM_MIN_CHUNK_CHARS`
+  Set the default minimum merge size for short Telegram reply chunks.
 - `CYBERBOSS_WEIXIN_BASE_URL`, `CYBERBOSS_WEIXIN_CDN_BASE_URL`, `CYBERBOSS_WEIXIN_QR_BOT_TYPE`
   Override the WeChat bridge endpoints and QR bot type when your deployment needs it.
 - `CYBERBOSS_ENABLE_LOCATION_SERVER`
@@ -287,7 +289,7 @@ Switch the runtime with `CYBERBOSS_RUNTIME`. You do not need a different command
 - `/checkin <min>-<max>`
   Update the proactive random check-in range for the current project
 - `/chunk <number>`
-  Adjust the minimum merge size for short WeChat reply chunks
+  Adjust the minimum merge size for short reply chunks
 - `/yes`
   Allow the current approval once
 - `/always`
@@ -299,9 +301,9 @@ Switch the runtime with `CYBERBOSS_RUNTIME`. You do not need a different command
 - `/model <id>`
   Switch model
 - `/star`
-  Show the GitHub star guide inside WeChat
+  Show the GitHub star guide
 - `/help`
-  Show WeChat command help
+  Show command help
 
 Plain text messages go directly to the bound thread. If nothing is bound yet, bind a workspace first:
 

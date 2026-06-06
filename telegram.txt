@@ -8,7 +8,7 @@
  - 出站消息根据"最近用户从哪个 app 发来"决定回到哪个 app
  - TG 端额外保留 thinking 链（claudecode runtime 的思考块），微信端继续过滤
  - 微信端已有的命令（/bind /status /new /compact /switch /stop /checkin /yes /no /always /model /help /memory）TG
- 都要支持；/chunk 是微信专属，TG 不暴露
+ 都要支持；/chunk 双端支持，用来调整各自渠道的短分块合并长度
 
  已经定下来的两个关键决定：
  - canonical senderId 用微信 wxid：TG 端通过一次性 /link <code> 握手把 tg_chat_id 绑到对应 wxid，bindingKey
@@ -52,7 +52,7 @@
  - 所有出站点（streamDelivery.setReplyTarget、dispatchSystemMessage、flushDueReminders、sendApprovalPrompt、sendFailure
  ToThread、stopTypingForThread、resolveReplyTargetForBinding）改走 channelRouter.pickChannelForSender(senderId)
  拿到具体 adapter，再调 sendText/sendTyping/sendFile
- - dispatchChannelCommand 按 channel.capabilities 过滤命令（如 /chunk 仅 weixin）
+ - dispatchChannelCommand 按 channel.capabilities 过滤命令
  - 第一次出站没有 last-active 记录时退化到 config.defaultOutboundChannel（默认 weixin）
  - 一轮流式回复进行到一半收到另一渠道新消息：当前流不切，下一轮再切（避免一条回复劈两个端）
 
@@ -84,7 +84,7 @@
  - media-receive.js — 复用 stateDir/inbox/{YYYY-MM-DD}/ 目录结构（与 weixin 落盘一致），调 getFile + 直链下载
  - media-send.js — sendDocument / sendPhoto
  - index.js — 实现完整 channelAdapter 接口；capabilities.showThinking = config.telegramShowThinking ??
- true，supportsChunkConfig = false
+ true，supportsChunkConfig = true
 
  参考实现：src/adapters/channel/weixin/index.js 的整体结构、api.js 的 HTTP 风格、account-store.js 的落盘格式。
 
@@ -105,7 +105,7 @@
 
  src/core/command-registry.js：
  - 现有 action 已经有 .weixin[] / .terminal[]，新增 .telegram[]
- - 大部分命令两端都填，/chunk 仅 weixin，/link /unlink 双端
+ - 大部分命令两端都填，/chunk /link /unlink 双端
  - 新增 buildTelegramHelpText()，handleHelpCommand 按 inbound channel 选择渲染函数
 
  步骤 8 — config + 启动入口
@@ -166,7 +166,7 @@
  3. 共享上下文：weixin 发"我叫苏苏" → TG 问"我叫什么" → 应答出"苏苏"（说明同一 thread）
  4. 最近活跃路由：weixin 发一句 → reminder 触发 → 回到 weixin；TG 发一句 → reminder 触发 → 回到 TG
  5. 思考链：TG 端能看到折叠 blockquote 思考内容；微信端无任何思考泄漏
- 6. /chunk 隔离：TG 输入 /chunk 50 应回复"该命令不支持当前渠道"，weixin 仍正常工作
+ 6. /chunk 双端：TG 输入 /chunk 50 后应更新 Telegram 端最小合并长度，weixin 仍使用自己的配置
  7. 掉线弹性：把 TG 网络断开 5 分钟，weixin 端应继续无感工作（步骤 3 的独立 backoff 验证）
 
 
@@ -217,7 +217,7 @@
   2. TG 端发送 /link <code> → 完成绑定，两端共享 thread/sticker/reminder
   3. 微信发"我叫苏苏" → TG 问"我叫什么" → 应该能记住（同 thread）
   4. 谁最近发消息，回复就回到那一端；TG 端能看到折叠思考链，微信端不会泄漏
-  5. TG 输入 /chunk 50 → 会被告知该命令不支持
+  5. TG 输入 /chunk 50 → 会更新 Telegram 端最小合并长度
 
   剩下两件你可以决定：env vars 写到 .env，还是直接 $env: 临时设。要我把 .env.example 也加上 TG 相关条目吗？
 

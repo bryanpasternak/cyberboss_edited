@@ -40,13 +40,15 @@ test("checkin config store falls back to defaults and persists overrides", () =>
 test("handleCheckinCommand stores the new range and replies in English", async () => {
   const sent = [];
   const store = createStore();
+  const channelAdapter = {
+    async sendText(payload) {
+      sent.push(payload);
+    },
+  };
   const appLike = {
     checkinConfigStore: store,
-    channelAdapter: {
-      async sendText(payload) {
-        sent.push(payload);
-      },
-    },
+    channelAdapter,
+    currentChannel: channelAdapter,
   };
 
   await CyberbossApp.prototype.handleCheckinCommand.call(appLike, {
@@ -67,19 +69,24 @@ test("handleCheckinCommand stores the new range and replies in English", async (
 test("handleChunkCommand reports current value and persists updates through the channel adapter", async () => {
   const sent = [];
   let minChunk = 20;
-  const appLike = {
-    channelAdapter: {
-      getMinChunkChars() {
-        return minChunk;
-      },
-      setMinChunkChars(value) {
-        minChunk = value;
-        return minChunk;
-      },
-      async sendText(payload) {
-        sent.push(payload);
-      },
+  const channelAdapter = {
+    getMinChunkChars() {
+      return minChunk;
     },
+    getMaxChunkChars() {
+      return 3800;
+    },
+    setMinChunkChars(value) {
+      minChunk = value;
+      return minChunk;
+    },
+    async sendText(payload) {
+      sent.push(payload);
+    },
+  };
+  const appLike = {
+    channelAdapter,
+    currentChannel: channelAdapter,
   };
 
   await CyberbossApp.prototype.handleChunkCommand.call(appLike, {
@@ -95,7 +102,7 @@ test("handleChunkCommand reports current value and persists updates through the 
     args: "50",
   });
 
-  assert.equal(sent[0].text, "💡 Current minimum merge chunk is 20 characters. Usage: /chunk <number> (e.g. /chunk 50)");
+  assert.equal(sent[0].text, "💡 Current minimum merge chunk is 20 characters. Usage: /chunk <number> (1-3800, e.g. /chunk 50)");
   assert.equal(sent[1].text, "✅ Minimum merge chunk set to 50 characters. Shorter fragments will be merged into one message up to this size.");
   assert.equal(minChunk, 50);
 });
