@@ -9,6 +9,7 @@ const { CyberbossApp } = require("./core/app");
 const { runSystemCheckinPoller } = require("./app/system-checkin-poller");
 const { buildTerminalHelpText } = require("./core/command-registry");
 const { ensureStickerCatalogFilesSync } = require("./services/sticker-service");
+const { runDesirePanelServer } = require("./services/desire/desire-panel-server");
 const { createProjectTooling } = require("./tools/create-project-tooling");
 const { runToolMcpServer } = require("./tools/mcp-stdio-server");
 
@@ -131,6 +132,11 @@ async function main() {
 
   if (command === "start") {
     await getApp().start();
+    return;
+  }
+
+  if (command === "desire" || command === "desire-panel") {
+    await runDesirePanelServer({ config });
     return;
   }
 

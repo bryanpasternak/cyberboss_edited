@@ -40,6 +40,7 @@ const { ReminderQueueStore } = require("../adapters/channel/weixin/reminder-queu
 const { ChannelRouter } = require("./channel-router");
 const { LastActiveChannelStore } = require("./last-active-channel-store");
 const { IdentityMapStore } = require("./identity-map-store");
+const { DRIVE_KEYS } = require("../services/desire-service");
 const {
   matchesCommandPrefix,
   canonicalizeCommandTokens,
@@ -133,6 +134,7 @@ class CyberbossApp {
       onDeferredSystemReply: (payload) => this.deferSystemReply(payload),
     });
     this.pendingOperationByRunKey = new Map();
+    this.pendingDesireActionByRunKey = new Map();
     this.runtimeEventChain = Promise.resolve();
     this.runtimeAdapter.onEvent((event) => {
       this.threadStateStore.applyRuntimeEvent(event);
@@ -604,6 +606,13 @@ class CyberbossApp {
           senderId: prepared.senderId,
         },
       });
+      const desireAction = prepared?.provider === "system" ? extractDesireActionFromSystemText(runtimeTurn.text) : "";
+      if (desireAction) {
+        this.pendingDesireActionByRunKey.set(buildRunKey(turn.threadId, turn.turnId), desireAction);
+        if (turn.turnId) {
+          this.pendingDesireActionByRunKey.set(buildRunKey(turn.threadId, ""), desireAction);
+        }
+      }
       this.runtimeContextStore?.setActiveContext?.({
         workspaceRoot,
         runtimeId: this.runtimeAdapter.describe().id,
@@ -1189,6 +1198,9 @@ class CyberbossApp {
         case "checkin":
           await this.handleCheckinCommand(normalized, command);
           return;
+        case "desire":
+          await this.handleDesireCommand(normalized, command);
+          return;
         case "chunk":
           await this.handleChunkCommand(normalized, command);
           return;
@@ -1632,6 +1644,83 @@ class CyberbossApp {
     });
   }
 
+  async handleDesireCommand(normalized, command) {
+    const service = this.projectServices?.desire;
+    if (!service) {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: "Desire system is not initialized.",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const args = normalizeCommandArgument(command.args);
+    const [rawSubcommand, ...restTokens] = args.split(/\s+/).filter(Boolean);
+    const subcommand = normalizeCommandName(rawSubcommand || "state");
+    const reply = async (text) => {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text,
+        contextToken: normalized.contextToken,
+      });
+    };
+
+    if (subcommand === "help") {
+      await reply(buildDesireUsageText());
+      return;
+    }
+    if (subcommand === "on" || subcommand === "enable") {
+      service.toggleDriven(true);
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nDesire-driven check-in context: on`);
+      return;
+    }
+    if (subcommand === "off" || subcommand === "disable") {
+      service.toggleDriven(false);
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nDesire-driven check-in context: off`);
+      return;
+    }
+    if (subcommand === "tick") {
+      service.tick();
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nTick applied.`);
+      return;
+    }
+    if (subcommand === "satisfy") {
+      const action = normalizeCommandArgument(restTokens[0]);
+      if (!isKnownDesireAction(action)) {
+        await reply("Usage: /desire satisfy <co_read|github|web_search|web_browse|tease|vent|none>");
+        return;
+      }
+      service.satisfyAction(action);
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nSatisfied action: ${action}`);
+      return;
+    }
+    if (subcommand === "feed") {
+      const drive = normalizeCommandArgument(restTokens[0]);
+      if (!DRIVE_KEYS.includes(drive) || drive === "fatigue") {
+        await reply("Usage: /desire feed <attachment|curiosity|reflection|duty|social|libido|stress> [flit|fixation] <text>");
+        return;
+      }
+      const maybeKind = normalizeCommandArgument(restTokens[1]);
+      const kind = maybeKind === "fixation" || maybeKind === "flit" ? maybeKind : "flit";
+      const textStart = kind === maybeKind ? 2 : 1;
+      const text = restTokens.slice(textStart).join(" ").trim();
+      if (!text) {
+        await reply("Usage: /desire feed <drive> [flit|fixation] <text>");
+        return;
+      }
+      service.feedThought(text, drive, kind, kind === "fixation" ? 0.8 : 0.5);
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nThought fed: ${text.slice(0, 40)}`);
+      return;
+    }
+    if (subcommand !== "state" && subcommand !== "status") {
+      await reply(buildDesireUsageText());
+      return;
+    }
+
+    await reply(buildDesireStateText(service.getSnapshot()));
+  }
+
   async handleChunkCommand(normalized, command) {
     const arg = normalizeCommandArgument(command.args);
     const maxChunk = resolveChannelMaxChunkChars(this.currentChannel);
@@ -1797,6 +1886,40 @@ class CyberbossApp {
     });
   }
 
+  takePendingDesireAction(threadId, turnId) {
+    if (!this.pendingDesireActionByRunKey || typeof this.pendingDesireActionByRunKey.get !== "function") {
+      return "";
+    }
+    const keys = [
+      buildRunKey(threadId, turnId),
+      buildRunKey(threadId, ""),
+    ];
+    for (const key of keys) {
+      const action = this.pendingDesireActionByRunKey.get(key);
+      if (!action) {
+        continue;
+      }
+      for (const candidate of keys) {
+        this.pendingDesireActionByRunKey.delete(candidate);
+      }
+      return action;
+    }
+    return "";
+  }
+
+  satisfyDesireAction(action) {
+    if (!isKnownDesireAction(action) || !this.projectServices?.desire) {
+      return;
+    }
+    try {
+      this.projectServices.desire.satisfyAction(action);
+      console.log(`[cyberboss] desire satisfied action=${action}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error || "unknown error");
+      console.warn(`[cyberboss] desire satisfy failed action=${action}: ${message}`);
+    }
+  }
+
   resolveWorkspaceRoot(bindingKey) {
     const sessionStore = this.runtimeAdapter.getSessionStore();
     return sessionStore.getActiveWorkspaceRoot(bindingKey) || this.config.workspaceRoot;
@@ -1820,6 +1943,9 @@ class CyberbossApp {
       if (pendingOperation && pendingOperations?.delete) {
         pendingOperations.delete(completedRunKey);
       }
+      const pendingDesireAction = typeof this.takePendingDesireAction === "function"
+        ? this.takePendingDesireAction(event.payload.threadId, event.payload.turnId)
+        : "";
       const sessionStore = this.runtimeAdapter.getSessionStore();
       sessionStore.clearApprovalPrompt(event.payload.threadId);
       const linked = this.runtimeAdapter.getSessionStore().findBindingForThreadId(event.payload.threadId);
@@ -1840,6 +1966,8 @@ class CyberbossApp {
             event.payload.text || "❌ Execution failed",
             failureReplyTarget,
           );
+        } else if (pendingDesireAction && typeof this.satisfyDesireAction === "function") {
+          this.satisfyDesireAction(pendingDesireAction);
         }
         if (linked?.bindingKey && linked?.workspaceRoot) {
           await this.flushPendingInboundMessages({
@@ -2139,6 +2267,71 @@ function buildLocationMovementSystemText(event) {
     toLabel ? `To: ${toLabel}` : "",
     `Observed at: ${movedAt}.`,
   ].filter(Boolean).join("\n");
+}
+
+function buildDesireStateText(snapshot) {
+  const state = snapshot?.state || {};
+  const drive = snapshot?.drive || state.drive || {};
+  const intent = snapshot?.intent || {};
+  const thoughts = Array.isArray(snapshot?.thoughts) ? snapshot.thoughts : [];
+  const lines = [
+    "Desire state",
+    `intent: ${intent.wantAction || "none"} (${intent.driveKey || "unknown"} ${formatDriveNumber(intent.score)})`,
+    `reason: ${normalizeText(intent.reason) || "-"}`,
+    `driven: ${snapshot?.drivenBehaviorEnabled || state.drivenBehaviorEnabled ? "on" : "off"}`,
+    "",
+    ...DRIVE_KEYS.map((key) => `${key}: ${formatDriveBar(drive[key])} ${formatDrivePercent(drive[key])}`),
+    "",
+    `thoughts: ${thoughts.length}`,
+  ];
+  const preview = thoughts.slice(0, 5).map((thought) => {
+    const kind = thought.kind === "fixation" ? "*" : "-";
+    return `${kind} ${normalizeText(thought.text).slice(0, 36)} (${thought.drive} ${formatDrivePercent(thought.strength)})`;
+  });
+  if (preview.length) {
+    lines.push(...preview);
+  }
+  return lines.join("\n");
+}
+
+function buildDesireUsageText() {
+  return [
+    "Usage:",
+    "/desire",
+    "/desire on",
+    "/desire off",
+    "/desire tick",
+    "/desire feed <drive> [flit|fixation] <text>",
+    "/desire satisfy <co_read|github|web_search|web_browse|tease|vent|none>",
+  ].join("\n");
+}
+
+function extractDesireActionFromSystemText(text) {
+  const normalized = normalizeText(text);
+  if (!normalized.includes("Desire context:")) {
+    return "";
+  }
+  const match = normalized.match(/\baction=([a-z_]+)/i);
+  const action = normalizeCommandArgument(match?.[1] || "");
+  return isKnownDesireAction(action) ? action : "";
+}
+
+function isKnownDesireAction(action) {
+  return ["co_read", "github", "web_search", "web_browse", "tease", "vent", "none"].includes(normalizeCommandArgument(action));
+}
+
+function formatDriveBar(value) {
+  const count = Math.max(0, Math.min(10, Math.round((Number(value) || 0) * 10)));
+  return `${"#".repeat(count)}${"-".repeat(10 - count)}`;
+}
+
+function formatDrivePercent(value) {
+  return `${Math.round(Math.max(0, Math.min(1, Number(value) || 0)) * 100)}%`;
+}
+
+function formatDriveNumber(value) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric.toFixed(2) : "0.00";
 }
 
 function buildLocationTriggerSystemText(trigger) {

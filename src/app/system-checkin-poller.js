@@ -5,6 +5,7 @@ const { SessionStore } = require("../adapters/runtime/codex/session-store");
 const { CheckinConfigStore, resolveDefaultCheckinRange } = require("../core/checkin-config-store");
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("../core/default-targets");
 const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
+const { createDesireService } = require("../services/desire-service");
 
 const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again.";
 
@@ -16,6 +17,7 @@ async function runSystemCheckinPoller(config) {
   const target = resolvePollerTarget({ config, account, sessionStore });
   const defaultRange = resolveDefaultCheckinRange();
   let currentRange = checkinConfigStore.getRange(defaultRange);
+  const desireService = createDesireService(config);
 
   console.log(`[cyberboss] checkin poller ready user=${target.senderId} workspace=${target.workspaceRoot}`);
   console.log(`[cyberboss] checkin interval range ${formatRangeMinutes(currentRange)}`);
@@ -32,12 +34,13 @@ async function runSystemCheckinPoller(config) {
       continue;
     }
 
+    const desireContext = tickDesireForCheckin(desireService);
     const queued = queue.enqueue({
       id: crypto.randomUUID(),
       accountId: account.accountId,
       senderId: target.senderId,
       workspaceRoot: target.workspaceRoot,
-      text: buildCheckinTrigger(config),
+      text: buildCheckinTrigger(config, desireContext),
       createdAt: new Date().toISOString(),
     });
     console.log(`[cyberboss] checkin queued id=${queued.id}`);
@@ -105,9 +108,25 @@ function formatRangeMinutes(range) {
   return `${Math.round(range.minIntervalMs / 60000)}m-${Math.round(range.maxIntervalMs / 60000)}m`;
 }
 
-function buildCheckinTrigger(config) {
+function tickDesireForCheckin(desireService) {
+  try {
+    desireService.tick();
+    return desireService.buildDesireSystemMessage();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error || "unknown error");
+    console.warn(`[cyberboss] desire checkin tick failed: ${message}`);
+    return "";
+  }
+}
+
+function buildCheckinTrigger(config, desireContext = "") {
   const userName = normalizeText(config?.userName) || "the user";
-  return INTERNAL_CHECKIN_TRIGGER_TEMPLATE.replace("%USER%", userName);
+  const base = INTERNAL_CHECKIN_TRIGGER_TEMPLATE.replace("%USER%", userName);
+  const normalizedDesireContext = normalizeText(desireContext);
+  if (!normalizedDesireContext) {
+    return base;
+  }
+  return `${normalizedDesireContext}\n\n${base}`;
 }
 
 module.exports = { runSystemCheckinPoller };

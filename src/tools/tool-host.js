@@ -140,6 +140,97 @@ const PROJECT_TOOLS = [
     },
   },
   {
+    name: "cyberboss_desire_state",
+    description: "Read the current Cyberboss desire state, scores, intent, and thought pool. Works even when desire-driven behavior is disabled.",
+    shortHint: "Read current desire state.",
+    topics: ["desire"],
+    inputSchema: {
+      type: "object",
+      properties: {},
+      additionalProperties: false,
+    },
+    async handler({ services }) {
+      const service = requireDesireService(services);
+      const result = service.getSnapshot();
+      return {
+        text: `Desire state: intent=${result.intent.wantAction} drive=${result.intent.driveKey} score=${result.intent.score.toFixed(2)}`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: "cyberboss_desire_feed",
+    description: "Feed a thought into the Cyberboss desire thought pool. Same text reinforces an existing thought.",
+    shortHint: "Feed a thought into the desire pool.",
+    topics: ["desire"],
+    inputSchema: {
+      type: "object",
+      required: ["text", "drive"],
+      properties: {
+        text: { type: "string", description: "Thought text content." },
+        drive: { type: "string", description: "Associated drive key: attachment, curiosity, reflection, duty, social, libido, stress." },
+        kind: { type: "string", description: "flit or fixation. Defaults to flit." },
+        strength: { type: "number", description: "Initial strength 0..1. Defaults to 0.5." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireDesireService(services);
+      service.feedThought(args.text, args.drive, args.kind || "flit", args.strength ?? 0.5);
+      const result = service.getSnapshot();
+      return {
+        text: `Thought fed: ${args.text.slice(0, 40)}`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: "cyberboss_desire_control",
+    description: "Toggle Cyberboss desire-driven behavior on or off. When off, desire state remains observable but does not affect system check-ins.",
+    shortHint: "Toggle desire-driven behavior.",
+    topics: ["desire"],
+    inputSchema: {
+      type: "object",
+      required: ["enabled"],
+      properties: {
+        enabled: { type: "boolean", description: "true enables desire-driven check-in context; false disables it." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireDesireService(services);
+      service.toggleDriven(args.enabled);
+      const result = service.getSnapshot();
+      return {
+        text: `Desire-driven behavior ${args.enabled ? "enabled" : "disabled"}.`,
+        data: result,
+      };
+    },
+  },
+  {
+    name: "cyberboss_desire_satisfy",
+    description: "Apply desire satisfaction decay for a completed action such as co_read, web_search, web_browse, tease, vent, or none.",
+    shortHint: "Apply desire satisfaction decay.",
+    topics: ["desire"],
+    inputSchema: {
+      type: "object",
+      required: ["action"],
+      properties: {
+        action: { type: "string", description: "Action: co_read, github, web_search, web_browse, tease, vent, or none." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireDesireService(services);
+      service.satisfyAction(args.action);
+      const result = service.getSnapshot();
+      return {
+        text: `Desire satisfied: ${args.action}`,
+        data: result,
+      };
+    },
+  },
+  {
     name: "cyberboss_channel_send_file",
     description: "Send an existing local file back to the current WeChat chat.",
     shortHint: "Send a local file back to the current WeChat user.",
@@ -556,6 +647,13 @@ function createExtraToolHosts(services = {}) {
     hosts.push(new WhereaboutsToolHost({ service: services.whereabouts }));
   }
   return hosts;
+}
+
+function requireDesireService(services = {}) {
+  if (!services.desire) {
+    throw new Error("Desire service is not initialized.");
+  }
+  return services.desire;
 }
 
 function normalizeText(value) {

@@ -21,6 +21,56 @@ function createHost() {
           return { id: "system-1", ...args };
         },
       },
+      desire: {
+        snapshot: {
+          state: {
+            drive: { curiosity: 0.5 },
+            thoughts: [],
+            drivenBehaviorEnabled: false,
+          },
+          intent: {
+            wantAction: "web_search",
+            driveKey: "curiosity",
+            score: 0.5,
+          },
+          thoughts: [],
+          thoughtCount: 0,
+          drivenBehaviorEnabled: false,
+        },
+        getSnapshot() {
+          return this.snapshot;
+        },
+        feedThought(text, drive, kind, strength) {
+          this.snapshot = {
+            ...this.snapshot,
+            state: {
+              ...this.snapshot.state,
+              thoughts: [{ text, drive, kind, strength }],
+            },
+            thoughts: [{ text, drive, kind, strength }],
+            thoughtCount: 1,
+          };
+          return this.snapshot.state;
+        },
+        toggleDriven(enabled) {
+          this.snapshot = {
+            ...this.snapshot,
+            state: {
+              ...this.snapshot.state,
+              drivenBehaviorEnabled: enabled,
+            },
+            drivenBehaviorEnabled: enabled,
+          };
+          return this.snapshot.state;
+        },
+        satisfyAction(action) {
+          this.snapshot = {
+            ...this.snapshot,
+            satisfiedAction: action,
+          };
+          return this.snapshot.state;
+        },
+      },
       channelFile: {
         async sendToCurrentChat(args) {
           return { filePath: args.filePath, userId: args.userId || "user-1" };
@@ -220,6 +270,30 @@ test("tool host exposes structured timeline read tools", async () => {
   assert.equal(readResult.text, "Timeline day 2026-04-21: 1 events.");
   assert.equal(categoriesResult.text, "Timeline categories loaded: 2.");
   assert.equal(proposalsResult.text, "Timeline proposals loaded: 1.");
+});
+
+test("tool host exposes desire state, feed, control, and satisfy tools", async () => {
+  const host = createHost();
+  const stateResult = await host.invokeTool("cyberboss_desire_state", {}, {});
+  const feedResult = await host.invokeTool("cyberboss_desire_feed", {
+    text: "想看看外面有什么新东西",
+    drive: "curiosity",
+    strength: 0.6,
+  }, {});
+  const controlResult = await host.invokeTool("cyberboss_desire_control", {
+    enabled: true,
+  }, {});
+  const satisfyResult = await host.invokeTool("cyberboss_desire_satisfy", {
+    action: "web_search",
+  }, {});
+
+  assert.equal(stateResult.text, "Desire state: intent=web_search drive=curiosity score=0.50");
+  assert.equal(feedResult.text, "Thought fed: 想看看外面有什么新东西");
+  assert.equal(feedResult.data.thoughtCount, 1);
+  assert.equal(controlResult.text, "Desire-driven behavior enabled.");
+  assert.equal(controlResult.data.drivenBehaviorEnabled, true);
+  assert.equal(satisfyResult.text, "Desire satisfied: web_search");
+  assert.equal(satisfyResult.data.satisfiedAction, "web_search");
 });
 
 test("tool host validates structured reminder input types", async () => {

@@ -1,0 +1,764 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Cyberboss Desire</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f4;
+      --surface: #ffffff;
+      --surface-2: #edf3f1;
+      --ink: #19201f;
+      --muted: #66706d;
+      --line: #d8dedb;
+      --accent: #2f6f63;
+      --accent-2: #af5d45;
+      --accent-3: #425b8c;
+      --danger: #9e3d3d;
+      --shadow: 0 12px 36px rgba(25, 32, 31, 0.08);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Segoe UI", "Microsoft YaHei", Arial, sans-serif;
+      letter-spacing: 0;
+    }
+
+    button,
+    input,
+    select {
+      font: inherit;
+    }
+
+    button {
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+      transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+      background: var(--surface-2);
+    }
+
+    button:active {
+      transform: translateY(1px);
+    }
+
+    .page {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 68px;
+      padding: 14px 24px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    .brand {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .brand-title {
+      font-size: 18px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .brand-subtitle {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .top-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .toggle {
+      display: inline-grid;
+      grid-template-columns: 48px auto;
+      align-items: center;
+      gap: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: 999px;
+      padding: 4px 10px 4px 4px;
+      min-height: 36px;
+    }
+
+    .switch {
+      width: 42px;
+      height: 24px;
+      border-radius: 999px;
+      border: 0;
+      background: #b8c1bd;
+      position: relative;
+      padding: 0;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 3px;
+      left: 3px;
+      width: 18px;
+      height: 18px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+      transition: transform 140ms ease;
+    }
+
+    .switch.on {
+      background: var(--accent);
+    }
+
+    .switch.on::after {
+      transform: translateX(18px);
+    }
+
+    .toggle-label {
+      font-size: 13px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+
+    .main {
+      display: grid;
+      grid-template-columns: minmax(0, 1.6fr) minmax(320px, 0.8fr);
+      gap: 18px;
+      width: min(1280px, 100%);
+      margin: 0 auto;
+      padding: 20px 24px 28px;
+    }
+
+    .left,
+    .right {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .panel {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+
+    .panel-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .panel-title {
+      font-size: 15px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .panel-meta {
+      color: var(--muted);
+      font-size: 12px;
+      white-space: nowrap;
+    }
+
+    .intent {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      padding: 18px 16px;
+      align-items: start;
+    }
+
+    .intent-action {
+      font-size: 28px;
+      font-weight: 760;
+      line-height: 1.15;
+      overflow-wrap: anywhere;
+    }
+
+    .intent-reason {
+      margin-top: 8px;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    .score-ring {
+      display: grid;
+      place-items: center;
+      width: 92px;
+      aspect-ratio: 1;
+      border-radius: 50%;
+      border: 10px solid var(--surface-2);
+      outline: 1px solid var(--line);
+      color: var(--accent);
+      font-size: 22px;
+      font-weight: 760;
+    }
+
+    .drives {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 1px;
+      background: var(--line);
+      border-top: 1px solid var(--line);
+    }
+
+    .drive-row {
+      display: grid;
+      grid-template-columns: 112px minmax(0, 1fr) 48px;
+      gap: 10px;
+      align-items: center;
+      min-height: 58px;
+      padding: 12px 14px;
+      background: var(--surface);
+    }
+
+    .drive-name {
+      font-weight: 650;
+      font-size: 13px;
+      overflow-wrap: anywhere;
+    }
+
+    .bar {
+      height: 10px;
+      border-radius: 999px;
+      background: var(--surface-2);
+      overflow: hidden;
+      border: 1px solid var(--line);
+    }
+
+    .bar-fill {
+      height: 100%;
+      width: 0%;
+      border-radius: 999px;
+      background: var(--accent);
+      transition: width 180ms ease;
+    }
+
+    .drive-row[data-drive="fatigue"] .bar-fill {
+      background: var(--accent-2);
+    }
+
+    .drive-row[data-drive="stress"] .bar-fill {
+      background: var(--danger);
+    }
+
+    .drive-row[data-drive="curiosity"] .bar-fill,
+    .drive-row[data-drive="social"] .bar-fill {
+      background: var(--accent-3);
+    }
+
+    .drive-value {
+      text-align: right;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      font-size: 13px;
+    }
+
+    .feed {
+      display: grid;
+      grid-template-columns: minmax(120px, 180px) minmax(90px, 140px) minmax(92px, 120px) minmax(0, 1fr) auto;
+      gap: 8px;
+      padding: 14px 16px;
+      border-top: 1px solid var(--line);
+      align-items: center;
+    }
+
+    input,
+    select {
+      width: 100%;
+      min-height: 36px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--ink);
+      padding: 7px 10px;
+      outline: none;
+    }
+
+    input:focus,
+    select:focus {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(47, 111, 99, 0.14);
+    }
+
+    .thoughts {
+      display: grid;
+      gap: 1px;
+      background: var(--line);
+      max-height: 526px;
+      overflow: auto;
+    }
+
+    .thought {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      gap: 10px;
+      padding: 12px 14px;
+      background: var(--surface);
+      align-items: start;
+      min-height: 58px;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 12px;
+      color: #fff;
+      background: var(--accent);
+      white-space: nowrap;
+    }
+
+    .tag.flit {
+      background: var(--accent-3);
+    }
+
+    .thought-text {
+      font-size: 13px;
+      line-height: 1.45;
+      overflow-wrap: anywhere;
+    }
+
+    .thought-meta {
+      margin-top: 4px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .empty {
+      padding: 22px 16px;
+      color: var(--muted);
+      background: var(--surface);
+      font-size: 14px;
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      padding: 14px 16px;
+    }
+
+    .button-primary {
+      border-color: var(--accent);
+      background: var(--accent);
+      color: #fff;
+    }
+
+    .button-primary:hover {
+      background: #285f55;
+      color: #fff;
+    }
+
+    .status {
+      min-height: 20px;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 0 16px 14px;
+    }
+
+    @media (max-width: 920px) {
+      .main {
+        grid-template-columns: 1fr;
+      }
+
+      .feed {
+        grid-template-columns: 1fr 1fr;
+      }
+
+      .feed input {
+        grid-column: 1 / -1;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .topbar {
+        align-items: flex-start;
+        flex-direction: column;
+        padding: 12px 14px;
+      }
+
+      .top-actions {
+        width: 100%;
+        justify-content: flex-start;
+      }
+
+      .main {
+        padding: 14px;
+      }
+
+      .intent {
+        grid-template-columns: 1fr;
+      }
+
+      .score-ring {
+        width: 78px;
+      }
+
+      .drives {
+        grid-template-columns: 1fr;
+      }
+
+      .drive-row {
+        grid-template-columns: 96px minmax(0, 1fr) 44px;
+      }
+
+      .feed,
+      .actions {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-title">Cyberboss Desire</div>
+        <div class="brand-subtitle" id="lastUpdated">等待状态</div>
+      </div>
+      <div class="top-actions">
+        <label class="toggle">
+          <button class="switch" id="toggleDriven" type="button" aria-label="切换驱动行为"></button>
+          <span class="toggle-label" id="toggleLabel">驱动关闭</span>
+        </label>
+        <button id="refreshBtn" type="button">刷新</button>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="left">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">此刻最想</div>
+            <div class="panel-meta" id="intentMeta">intent</div>
+          </div>
+          <div class="intent">
+            <div>
+              <div class="intent-action" id="intentAction">-</div>
+              <div class="intent-reason" id="intentReason">-</div>
+            </div>
+            <div class="score-ring" id="intentScore">0.00</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">驱动条</div>
+            <div class="panel-meta">drive / score</div>
+          </div>
+          <div class="drives" id="drives"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">喂一个念头</div>
+            <div class="panel-meta">feed</div>
+          </div>
+          <form class="feed" id="feedForm">
+            <select id="feedDrive" aria-label="关联驱动">
+              <option value="attachment">attachment</option>
+              <option value="curiosity">curiosity</option>
+              <option value="reflection">reflection</option>
+              <option value="duty">duty</option>
+              <option value="social">social</option>
+              <option value="libido">libido</option>
+              <option value="stress">stress</option>
+            </select>
+            <select id="feedKind" aria-label="念头类型">
+              <option value="flit">flit</option>
+              <option value="fixation">fixation</option>
+            </select>
+            <input id="feedStrength" type="number" min="0" max="1" step="0.05" value="0.5" aria-label="强度">
+            <input id="feedText" type="text" placeholder="念头文本" aria-label="念头文本">
+            <button class="button-primary" type="submit">喂入</button>
+          </form>
+          <div class="status" id="statusLine"></div>
+        </div>
+      </section>
+
+      <aside class="right">
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">手动推进</div>
+            <div class="panel-meta">control</div>
+          </div>
+          <div class="actions">
+            <button id="tickBtn" type="button">Tick</button>
+            <select id="satisfyAction" aria-label="回落动作">
+              <option value="co_read">co_read</option>
+              <option value="github">github</option>
+              <option value="web_search">web_search</option>
+              <option value="web_browse">web_browse</option>
+              <option value="tease">tease</option>
+              <option value="vent">vent</option>
+              <option value="none">none</option>
+            </select>
+            <button id="satisfyBtn" type="button">Satisfy</button>
+          </div>
+          <div class="status" id="controlStatus"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-head">
+            <div class="panel-title">念头池</div>
+            <div class="panel-meta" id="thoughtCount">0</div>
+          </div>
+          <div class="thoughts" id="thoughts"></div>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <script>
+    const driveOrder = ["attachment", "curiosity", "reflection", "duty", "social", "fatigue", "libido", "stress"];
+    let currentSnapshot = null;
+
+    const els = {
+      lastUpdated: document.getElementById("lastUpdated"),
+      toggleDriven: document.getElementById("toggleDriven"),
+      toggleLabel: document.getElementById("toggleLabel"),
+      refreshBtn: document.getElementById("refreshBtn"),
+      intentMeta: document.getElementById("intentMeta"),
+      intentAction: document.getElementById("intentAction"),
+      intentReason: document.getElementById("intentReason"),
+      intentScore: document.getElementById("intentScore"),
+      drives: document.getElementById("drives"),
+      feedForm: document.getElementById("feedForm"),
+      feedDrive: document.getElementById("feedDrive"),
+      feedKind: document.getElementById("feedKind"),
+      feedStrength: document.getElementById("feedStrength"),
+      feedText: document.getElementById("feedText"),
+      statusLine: document.getElementById("statusLine"),
+      tickBtn: document.getElementById("tickBtn"),
+      satisfyAction: document.getElementById("satisfyAction"),
+      satisfyBtn: document.getElementById("satisfyBtn"),
+      controlStatus: document.getElementById("controlStatus"),
+      thoughts: document.getElementById("thoughts"),
+      thoughtCount: document.getElementById("thoughtCount"),
+    };
+
+    async function api(path, options = {}) {
+      const response = await fetch(path, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(text || `HTTP ${response.status}`);
+      }
+      return await response.json();
+    }
+
+    async function loadState() {
+      currentSnapshot = await api("/api/desire/state");
+      render(currentSnapshot);
+      return currentSnapshot;
+    }
+
+    function render(snapshot) {
+      const state = snapshot.state || {};
+      const intent = snapshot.intent || {};
+      const drive = snapshot.drive || state.drive || {};
+      const scores = snapshot.scores || {};
+      const thoughts = Array.isArray(snapshot.thoughts) ? snapshot.thoughts : [];
+      const enabled = Boolean(snapshot.drivenBehaviorEnabled || state.drivenBehaviorEnabled);
+
+      els.toggleDriven.classList.toggle("on", enabled);
+      els.toggleLabel.textContent = enabled ? "驱动开启" : "驱动关闭";
+      els.intentAction.textContent = intent.wantAction || "-";
+      els.intentReason.textContent = intent.reason || "-";
+      els.intentScore.textContent = formatNumber(intent.score);
+      els.intentMeta.textContent = `${intent.driveKey || "-"} / ${intent.queryHint || "no query"}`;
+      els.lastUpdated.textContent = `last tick ${formatTime(state.lastTickAt)}`;
+
+      els.drives.innerHTML = "";
+      for (const key of driveOrder) {
+        const value = Number(drive[key]) || 0;
+        const score = Number(scores[key]) || value;
+        const row = document.createElement("div");
+        row.className = "drive-row";
+        row.dataset.drive = key;
+        row.innerHTML = `
+          <div class="drive-name">${escapeHtml(key)}</div>
+          <div class="bar" title="drive ${formatNumber(value)} score ${formatNumber(score)}">
+            <div class="bar-fill" style="width: ${Math.round(value * 100)}%"></div>
+          </div>
+          <div class="drive-value">${Math.round(value * 100)}%</div>
+        `;
+        els.drives.appendChild(row);
+      }
+
+      els.thoughtCount.textContent = String(thoughts.length);
+      els.thoughts.innerHTML = "";
+      if (!thoughts.length) {
+        const empty = document.createElement("div");
+        empty.className = "empty";
+        empty.textContent = "念头池为空";
+        els.thoughts.appendChild(empty);
+        return;
+      }
+      for (const thought of thoughts.slice(0, 80)) {
+        const item = document.createElement("div");
+        item.className = "thought";
+        item.innerHTML = `
+          <span class="tag ${thought.kind === "flit" ? "flit" : ""}">${escapeHtml(thought.kind || "flit")}</span>
+          <div>
+            <div class="thought-text">${escapeHtml(thought.text || "")}</div>
+            <div class="thought-meta">${escapeHtml(thought.drive || "")} / fed ${Number(thought.fedCount) || 0}</div>
+          </div>
+          <div class="drive-value">${Math.round((Number(thought.strength) || 0) * 100)}%</div>
+        `;
+        els.thoughts.appendChild(item);
+      }
+    }
+
+    function formatNumber(value) {
+      const numeric = Number(value);
+      return Number.isFinite(numeric) ? numeric.toFixed(2) : "0.00";
+    }
+
+    function formatTime(value) {
+      const numeric = Number(value);
+      if (!Number.isFinite(numeric) || numeric <= 0) {
+        return "-";
+      }
+      return new Date(numeric).toLocaleString("zh-CN", { hour12: false });
+    }
+
+    function escapeHtml(value) {
+      return String(value || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    function setStatus(element, text) {
+      element.textContent = text;
+      if (text) {
+        window.setTimeout(() => {
+          if (element.textContent === text) {
+            element.textContent = "";
+          }
+        }, 3000);
+      }
+    }
+
+    els.refreshBtn.addEventListener("click", () => {
+      loadState().catch((error) => setStatus(els.statusLine, error.message));
+    });
+
+    els.toggleDriven.addEventListener("click", async () => {
+      try {
+        const enabled = !(currentSnapshot?.drivenBehaviorEnabled || currentSnapshot?.state?.drivenBehaviorEnabled);
+        currentSnapshot = await api("/api/desire/control", {
+          method: "POST",
+          body: JSON.stringify({ enabled }),
+        });
+        render(currentSnapshot);
+        setStatus(els.controlStatus, enabled ? "驱动已开启" : "驱动已关闭");
+      } catch (error) {
+        setStatus(els.controlStatus, error.message);
+      }
+    });
+
+    els.feedForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const text = els.feedText.value.trim();
+      if (!text) {
+        setStatus(els.statusLine, "请输入念头文本");
+        return;
+      }
+      try {
+        currentSnapshot = await api("/api/desire/feed", {
+          method: "POST",
+          body: JSON.stringify({
+            text,
+            drive: els.feedDrive.value,
+            kind: els.feedKind.value,
+            strength: Number(els.feedStrength.value),
+          }),
+        });
+        els.feedText.value = "";
+        render(currentSnapshot);
+        setStatus(els.statusLine, "已喂入");
+      } catch (error) {
+        setStatus(els.statusLine, error.message);
+      }
+    });
+
+    els.tickBtn.addEventListener("click", async () => {
+      try {
+        currentSnapshot = await api("/api/desire/tick", { method: "POST", body: "{}" });
+        render(currentSnapshot);
+        setStatus(els.controlStatus, "已推进一拍");
+      } catch (error) {
+        setStatus(els.controlStatus, error.message);
+      }
+    });
+
+    els.satisfyBtn.addEventListener("click", async () => {
+      try {
+        currentSnapshot = await api("/api/desire/satisfy", {
+          method: "POST",
+          body: JSON.stringify({ action: els.satisfyAction.value }),
+        });
+        render(currentSnapshot);
+        setStatus(els.controlStatus, `已回落 ${els.satisfyAction.value}`);
+      } catch (error) {
+        setStatus(els.controlStatus, error.message);
+      }
+    });
+
+    loadState().catch((error) => setStatus(els.statusLine, error.message));
+  </script>
+</body>
+</html>

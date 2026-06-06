@@ -7,6 +7,7 @@ const { ReminderService } = require("../services/reminder-service");
 const { StickerService } = require("../services/sticker-service");
 const { SystemMessageService } = require("../services/system-message-service");
 const { TimelineService } = require("../services/timeline-service");
+const { createDesireService } = require("../services/desire-service");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
 const { WhereaboutsService } = require("whereabouts-mcp");
@@ -27,6 +28,7 @@ function createProjectTooling(config, options = {}) {
     reminder: new ReminderService({ config, sessionStore }),
     system: new SystemMessageService({ config, sessionStore }),
     channelFile,
+    desire: createDesireService(config),
     sticker: new StickerService({ config, channelAdapter, sessionStore, channelFileService: channelFile }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),
     whereabouts: new WhereaboutsService({

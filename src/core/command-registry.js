@@ -75,6 +75,14 @@ const COMMAND_GROUPS = [
         telegram: [],
         status: "active",
       },
+      {
+        action: "desire.panel",
+        summary: "Start the local desire observation panel",
+        terminal: ["desire"],
+        weixin: [],
+        telegram: [],
+        status: "active",
+      },
     ],
   },
   {
@@ -143,6 +151,14 @@ const COMMAND_GROUPS = [
         terminal: [],
         weixin: ["/checkin <min>-<max>"],
         telegram: ["/checkin <min>-<max>"],
+        status: "active",
+      },
+      {
+        action: "desire.control",
+        summary: "Inspect or control the local desire system",
+        terminal: [],
+        weixin: ["/desire", "/desire on", "/desire off"],
+        telegram: ["/desire", "/desire on", "/desire off"],
         status: "active",
       },
       {
@@ -336,6 +352,7 @@ function buildTerminalHelpText() {
     "  cyberboss login --channel telegram   register a Telegram bot token",
     "  cyberboss accounts                list locally saved accounts",
     "  cyberboss doctor                  print current config and thread state",
+    "  cyberboss desire                  start the local desire observation panel",
     "  npm run shared:start              start the shared app-server and WeChat bridge",
     "  npm run shared:open               attach to the shared thread currently bound in WeChat",
     "  npm run shared:status             show shared bridge status",
@@ -471,6 +488,7 @@ function toTerminalCommandExample(commandText) {
     case "start":
     case "doctor":
     case "help":
+    case "desire":
       return `cyberboss ${normalized}`;
     case "shared start":
     case "shared open":

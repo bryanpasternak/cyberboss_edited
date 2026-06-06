@@ -1,0 +1,169 @@
+心跳醒来
+ → 念头池衰减/加强/反哺驱动条
+ → pick_intent：哪一维的 score 最高（驱动值 + 执念加成）
+ → 哥哥去做那件事（co_read / web_browse / tease / vent ...）
+ → satisfy()：对应的驱动条乘性回落（如 tease 做完 → libido ×0.55）
+      → 持久化 + 推状态给前端
+
+      安全设计：默认 关（TWIN_DESIRE_DRIVEN 环境变量控制）。关的时候只读状态和计算都能看，但不会真的覆盖哥哥的行为。开的时候才接管决策。
+
+      ---
+      一句话总结
+
+      ▎ 欲望系统不是一个"加功能的面板"，它是一个行为驱动内核——让 AI 像人一样，因为"心里有缺口（驱动条高）"和"心里挂着事（念头变执念）"而去做某件事，做完缺口填上了（回落），然后继续生活。
+
+=============================
+
+---
+现有 intent 系统的完整架构
+
+DRIVE_INTENT_MAP (desire-engine.js)
+  驱动维 → wantAction + reason
+
+ACTION_SATISFY (desire-engine.js)
+  action → 回落哪些驱动维 × 多少
+
+isKnownDesireAction() (app.js)
+  硬编码白名单，校验输入合法性
+
+getSnapshot().availableActions (desire-service.js)
+  返回给前端的 action 列表
+
+---
+现有工作流程
+
+当前系统是 前馈式 的，分 5 步：
+
+① Checkin 定时醒来
+   ↓
+② DesireEngine.tick() → 驱动衰减/念头演化
+   ↓
+③ pickIntent() → 选最高分的驱动维 →
+   查 DRIVE_INTENT_MAP 得到 wantAction + reason
+   ↓
+④ 构建系统消息:
+   "Desire context: libido(0.81) action=tease. 我想凑近一点点…"
+   ↓
+⑤ 发送给 AI → AI 自己决定做什么
+   ↓
+⑥ turn 完成后 → 解析系统消息中的 action=tease
+   → satisfy("tease") → libido ×0.55
+
+关键点：AI 自己决定做不做、做什么。欲望系统只做两件事：
+- 提供上下文（系统消息里写 "你想 tease"），引导 AI
+- 自动回落（satisfy 基于系统建议的 action，不是 AI 实际做的）
+
+这样做的好处是不需要猜 AI 到底干了什么，建议即回落的近似足够用。
+
+
+==========
+
+
+已实现功能
+
+  - 8 维驱动条：attachment / curiosity / reflection / duty / social / fatigue / libido / stress
+  - 念头池：支持 flit 闪念和 fixation 执念；同文本重复喂入会增强，强度高会升级执念
+  - 意图选择：根据驱动条 + 执念加成计算 intent，例如 web_search / co_read / web_browse / tease / vent / none
+  - fatigue 闸：疲劳过线时不主动找事，直接偏向休息
+  - satisfy 回落：做完某类 action 后，对相关驱动做乘性回落
+  - JSON 持久化：状态保存在 ~/.cyberboss/desire-state.json
+  - 本地前端面板：现在运行在 http://127.0.0.1:8765
+  - HTTP API：
+      - GET /api/desire/state
+      - POST /api/desire/feed
+      - POST /api/desire/control
+      - POST /api/desire/tick
+      - POST /api/desire/satisfy
+  - MCP tools：
+      - cyberboss_desire_state
+      - cyberboss_desire_feed
+      - cyberboss_desire_control
+      - cyberboss_desire_satisfy
+  - checkin 接入：每次 proactive checkin 前会 tick desire；但只有开关开启时才把 desire intent 摘要注入系统触发
+
+  核心文件：
+
+  - src/services/desire-service.js
+  - src/services/desire/desire-panel-server.js
+  - src/app/system-checkin-poller.js
+
+  1. 启动面板：cyberboss desire
+  2. 面板/API 读取当前状态：drive、scores、intent、thoughts
+  3. 你可以在前端或 MCP 里喂念头，例如“想接着翻共读的书”
+  4. 每次 tick 时：
+      - 驱动条向默认值缓动
+      - 闪念衰减
+      - 执念增强
+      - 强执念会反哺对应 drive
+  5. 系统根据 drive + 执念加成计算最高召唤力，得到当前 intent
+  6. 默认 drivenBehaviorEnabled=false，所以只观察，不影响 Cyberboss 行为
+  7. 打开开关后，checkin 触发时会把类似 Desire context: curiosity(0.72) ... 的摘要放进系统消息里
+  8. 当明确知道完成了某个 action，可以手动或通过 MCP 调 satisfy，对应欲望会回落
+
+
+===================
+
+
+
+---
+需要改的 7 个文件
+
+改完后变成这样：
+
+1. desire-engine.js — 核心数据
+
+// ACTION_SATISFY — 每个 action 回落哪些驱动、乘多少
+const ACTION_SATISFY = {
+  web_browse:  { social: 0.48, curiosity: 0.82 },  // 本来就有
+  flirt:       { attachment: 0.45, libido: 0.78 },  // 新增：撩完 attachment 和 libido 都降
+  review:      { reflection: 0.40, curiosity: 0.85 }, // 新增：回顾完 reflection 降
+  check:       { duty: 0.45 },                       // 新增：提醒完 duty 降
+  tease:       { libido: 0.55, attachment: 0.78 },   // 保留
+  vent:        { stress: 0.45, attachment: 0.85 },   // 保留
+  none:        { attachment: 0.58, duty: 0.80 },     // 保留
+  // co_read, github, web_search 删掉
+}
+
+// DRIVE_INTENT_MAP — 驱动维 → action + reason（第一人称）
+const DRIVE_INTENT_MAP = {
+  attachment:  { wantAction: "flirt",   reason: "我想凑过去带一点点黏人的亲密感……", queryHint: "" },
+  curiosity:   { wantAction: "web_browse", reason: "我有点好奇外面在聊什么……", queryHint: "what people are talking about" },
+  reflection:  { wantAction: "review",  reason: "我想回头翻翻和你的对话，沉淀一下没说完的东西。", queryHint: "recent conversation recap" },
+  duty:        { wantAction: "check",   reason: "我总觉得还有事情没做完，想去确认一下。", queryHint: "pending tasks" },
+  social:      { wantAction: "web_browse", reason: "我想看看人群在聊什么……", queryHint: "what people are talking about" },
+  libido:      { wantAction: "tease",   reason: "我想凑近一点，带一点黏人的亲密感。", queryHint: "" },
+  stress:      { wantAction: "vent",    reason: "我有点堵，想把压力说出来再缓一缓。", queryHint: "" },
+}
+
+2. app.js — 3 处硬编码
+
+// isKnownDesireAction — action 白名单 (line 2319)
+return ["web_browse", "flirt", "review", "check", "tease", "vent", "none"].includes(...)
+
+// buildDesireUsageText — 帮助文本 (line 2305)
+"/desire satisfy <web_browse|flirt|review|check|tease|vent|none>"
+
+// 同上 (line 1691)
+await reply("Usage: /desire satisfy <web_browse|flirt|review|check|tease|vent|none>");
+
+3. desire-service.js — availableActions (line 50)
+
+availableActions: ["web_browse", "flirt", "review", "check", "tease", "vent", "none"],
+
+4. tool-host.js — MCP description (line 212)
+
+description: "...such as web_browse, flirt, review, check, tease, vent, or none."
+// 以及 inputSchema action 的描述
+
+5. panel/index.html — 前端下拉选项
+
+<option value="web_browse">web_browse</option>
+<option value="flirt">flirt</option>
+<option value="review">review</option>
+<option value="check">check</option>
+<!-- 删掉 co_read, github, web_search -->
+
+---
+关于「以后加新功能」
+
+现在 action 列表硬编码在 5 个不同地方。如果想以后好加，我可以顺手帮你集中到一个常量文件，比如 src/services/desire/desire-constants.js，所有文件 import 它，以后加 action 只改一处。
