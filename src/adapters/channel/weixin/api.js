@@ -36,7 +36,6 @@ function buildHeaders(token, body) {
   const headers = {
     "Content-Type": "application/json",
     AuthorizationType: "ilink_bot_token",
-    "Content-Length": String(Buffer.byteLength(body, "utf8")),
     "X-WECHAT-UIN": randomWechatUin(),
   };
   if (typeof token === "string" && token.trim()) {

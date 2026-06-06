@@ -107,6 +107,13 @@ function createWeixinChannelAdapter(config) {
         baseUrl: config.weixinBaseUrl,
         accountsDir: config.accountsDir,
         syncBufferDir: config.syncBufferDir,
+        capabilities: {
+          channelId: "weixin",
+          showThinking: false,
+          supportsTyping: true,
+          supportsAttachments: true,
+          supportsChunkConfig: true,
+        },
       };
     },
     async login() {

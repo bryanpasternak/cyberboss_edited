@@ -16,6 +16,16 @@ function readConfig() {
     userGender: readTextEnv("CYBERBOSS_USER_GENDER") || "female",
     allowedUserIds: readListEnv("CYBERBOSS_ALLOWED_USER_IDS"),
     channel: readTextEnv("CYBERBOSS_CHANNEL") || "weixin",
+    channels: resolveEnabledChannels(),
+    defaultOutboundChannel: readTextEnv("CYBERBOSS_DEFAULT_OUTBOUND_CHANNEL") || "weixin",
+    identityMapFile: path.join(stateDir, "identity-map.json"),
+    lastActiveChannelFile: path.join(stateDir, "last-active-channel.json"),
+    telegramApiBaseUrl: readTextEnv("CYBERBOSS_TELEGRAM_API_BASE_URL") || "https://api.telegram.org",
+    telegramBotToken: readTextEnv("CYBERBOSS_TELEGRAM_BOT_TOKEN"),
+    telegramAllowedChatIds: readListEnv("CYBERBOSS_TELEGRAM_ALLOWED_CHAT_IDS"),
+    telegramShowThinking: readOptionalBoolEnv("CYBERBOSS_TELEGRAM_SHOW_THINKING") !== false,
+    telegramConfigFile: path.join(stateDir, "telegram-config.json"),
+    telegramOffsetFile: path.join(stateDir, "telegram-offset.json"),
     runtime: readTextEnv("CYBERBOSS_RUNTIME") || "codex",
     timelineCommand: readTextEnv("CYBERBOSS_TIMELINE_COMMAND") || "timeline-for-agent",
     accountId: readTextEnv("CYBERBOSS_ACCOUNT_ID"),
@@ -169,6 +179,15 @@ function resolveLocationServerEnabled({ mode, enabled }) {
     return enabled;
   }
   return false;
+}
+
+function resolveEnabledChannels() {
+  const explicit = readListEnv("CYBERBOSS_CHANNELS").map((id) => id.toLowerCase()).filter(Boolean);
+  if (explicit.length) {
+    return Array.from(new Set(explicit));
+  }
+  const single = (readTextEnv("CYBERBOSS_CHANNEL") || "weixin").toLowerCase();
+  return [single];
 }
 
 module.exports = { readConfig };

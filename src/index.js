@@ -119,7 +119,8 @@ async function main() {
   }
 
   if (command === "login") {
-    await getApp().login();
+    const channelFlag = readFlagValue(argv.slice(1), "--channel");
+    await getApp().login(channelFlag);
     return;
   }
 

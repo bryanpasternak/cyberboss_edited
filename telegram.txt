@@ -1,0 +1,301 @@
+接入 Telegram + 微信/TG 双端共享上下文
+8760179836:AAGZ5ddvpvXwpfm2Fct-zZdhFXOjy45vk_Y
+
+ Context
+
+ 苏苏想把 cyberboss 同时接入微信和 Telegram：
+ - 两端共享同一份对话上下文（同一个 thread / session / sticker / reminder）
+ - 出站消息根据"最近用户从哪个 app 发来"决定回到哪个 app
+ - TG 端额外保留 thinking 链（claudecode runtime 的思考块），微信端继续过滤
+ - 微信端已有的命令（/bind /status /new /compact /switch /stop /checkin /yes /no /always /model /help /memory）TG
+ 都要支持；/chunk 是微信专属，TG 不暴露
+
+ 已经定下来的两个关键决定：
+ - canonical senderId 用微信 wxid：TG 端通过一次性 /link <code> 握手把 tg_chat_id 绑到对应 wxid，bindingKey
+ (workspaceId::accountId::senderId) 在两端完全一致 → session-store / sticker / reminder 等所有索引都不动。
+ - TG 接入用长轮询（getUpdates），与微信现有 polling 循环对称，不引入 webhook/反代。
+
+ 实施方案（按顺序，每步独立可验证）
+
+ 步骤 1 — channelAdapter 接口规范化（不改行为）
+
+ 给现有 weixin adapter 的 describe() 加 capabilities 字段，先不影响任何调用：
+
+ capabilities: {
+   showThinking: false,
+   supportsTyping: true,
+   supportsAttachments: true,
+   supportsChunkConfig: true,
+   channelId: "weixin",
+ }
+
+ 文件：src/adapters/channel/weixin/index.js
+
+ 步骤 2 — 新增 LastActiveChannelStore + ChannelRouter
+
+ 新增两个文件，先只接一个 weixin channel，路由结果应与现状完全一致（验证不回归）：
+
+ - src/core/last-active-channel-store.js — mark(senderId, channelId) / resolve(senderId)，落
+ stateDir/last-active-channel.json
+ - src/core/channel-router.js — 持有 Map<channelId, ChannelAdapter> 和 LastActiveChannelStore，对外暴露
+ pickChannelForSender(senderId)、getChannel(channelId)、describeAll()
+
+ 复用：src/core/turn-gate-store.js 是同类纯文件 store 的样式参考。
+
+ 步骤 3 — app.js 改造为多 channel
+
+ src/core/app.js：
+ - this.channelAdapter → this.channels: Map<channelId, adapter>，并构造 this.channelRouter
+ - start() 里的 while loop 拆成 Promise.all(channels.map(channel => pollChannel(channel)))，每个 channel 独立
+ backoff，互不阻塞
+ - handleIncomingMessage 顶部调 lastActiveChannelStore.mark(canonicalSenderId, channel.id)
+ - 所有出站点（streamDelivery.setReplyTarget、dispatchSystemMessage、flushDueReminders、sendApprovalPrompt、sendFailure
+ ToThread、stopTypingForThread、resolveReplyTargetForBinding）改走 channelRouter.pickChannelForSender(senderId)
+ 拿到具体 adapter，再调 sendText/sendTyping/sendFile
+ - dispatchChannelCommand 按 channel.capabilities 过滤命令（如 /chunk 仅 weixin）
+ - 第一次出站没有 last-active 记录时退化到 config.defaultOutboundChannel（默认 weixin）
+ - 一轮流式回复进行到一半收到另一渠道新消息：当前流不切，下一轮再切（避免一条回复劈两个端）
+
+ 步骤 4 — Identity Map（wxid canonical）
+
+ 新增：
+ - src/core/identity-map-store.js — linkTelegramChat(tgChatId, canonicalSenderId) / resolveCanonicalSenderId({channel,
+ externalId}) / unlink(...)，落 stateDir/identity-map.json
+ - src/core/command-registry.js 注册新命令 /link <code>（双端可用），/unlink（双端可用）
+ - 微信端用 /link 生成 6 位短 code → TG 端用 /link <code> 完成绑定 → 写入 identity-map → 同时把 last-active 标到 TG
+ - 未绑定的 TG 用户发消息：bot 直接回提示词指引绑定，不走 runtime
+
+ 接入点：每个 channel adapter 的 normalizeIncomingMessage 内部把 externalId 翻译成 canonical senderId。weixin adapter
+ 的 senderId 直接就是 wxid（已经是 canonical），无需翻译。
+
+ 步骤 5 — Telegram channel adapter
+
+ 新增 src/adapters/channel/telegram/：
+
+ - api.js — getUpdates({offset, timeoutMs}) / sendMessage / sendChatAction / sendDocument / sendPhoto / getFile（裸
+ HTTP，不引第三方 sdk，与现有 weixin 一致）
+ - account-store.js — stateDir/accounts/telegram-<botId>.json，结构：{accountId, botToken, botId, botUsername, savedAt}
+ - login.js — npm run login -- --channel telegram，提示粘贴 bot token → 调 getMe 验证 → 写盘
+ - message-utils.js — normalizeIncomingMessage 输出与 weixin 完全相同的字段集（参考 weixin 的契约：provider/accountId/w
+ orkspaceId/senderId/chatId/messageId/threadKey/text/attachments/contextToken/receivedAt），其中：
+   - provider: "telegram"
+   - senderId: 通过 identity-map 翻译成 canonical wxid（未绑定时返回特殊值触发引导）
+   - contextToken: 用 tg:${chatId}（在 weixin 那边它是 token，TG 这边只是路由用的不透明字符串）
+ - media-receive.js — 复用 stateDir/inbox/{YYYY-MM-DD}/ 目录结构（与 weixin 落盘一致），调 getFile + 直链下载
+ - media-send.js — sendDocument / sendPhoto
+ - index.js — 实现完整 channelAdapter 接口；capabilities.showThinking = config.telegramShowThinking ??
+ true，supportsChunkConfig = false
+
+ 参考实现：src/adapters/channel/weixin/index.js 的整体结构、api.js 的 HTTP 风格、account-store.js 的落盘格式。
+
+ 步骤 6 — 保留 TG 思考链
+
+ - src/adapters/runtime/claudecode/process-client.js 已经在 line 199-206 emit thinking 事件
+ - src/adapters/runtime/claudecode/events.js 当前未映射，新增 case 输出 { type: "runtime.thinking.delta", payload: {
+ threadId, turnId, text } }
+ - src/core/stream-delivery.js：
+   - handleRuntimeEvent 新增 case runtime.thinking.delta
+   - 入参里通过 state.replyTarget 拿到 channel 句柄，仅当 channel.capabilities.showThinking === true 时把它作为独立
+ item 写入 state.items，kind: "thinking"
+   - sendReplyDelivery 渲染 thinking item 时套上 TG 的 HTML <blockquote expandable>...</blockquote>（telegram adapter
+ sendText 支持 parse_mode）
+ - 微信侧 capabilities.showThinking = false，事件直接丢弃，行为完全不变
+
+ 步骤 7 — 命令对等 + help 文案
+
+ src/core/command-registry.js：
+ - 现有 action 已经有 .weixin[] / .terminal[]，新增 .telegram[]
+ - 大部分命令两端都填，/chunk 仅 weixin，/link /unlink 双端
+ - 新增 buildTelegramHelpText()，handleHelpCommand 按 inbound channel 选择渲染函数
+
+ 步骤 8 — config + 启动入口
+
+ src/core/config.js 新增：
+ - telegramBotToken（也可仅靠 account-store 文件，env 选填）
+ - telegramApiBaseUrl（默认 https://api.telegram.org）
+ - telegramAllowedChatIds（白名单，逗号分隔）
+ - telegramShowThinking（默认 true）
+ - defaultOutboundChannel（默认 weixin）
+ - channels：从环境变量 CYBERBOSS_CHANNELS 解析，默认 "weixin"，可设 "weixin,telegram"
+
+ bin/cyberboss.js / src/index.js 的 login 命令支持 --channel telegram，doctor 列出所有已配置 channel。
+
+ 关键复用点
+
+ ┌───────────────────┬──────────────────────────────────────────────────────┬─────────────────────────────────────┐
+ │     现有能力      │                         文件                         │                用途                 │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ bindingKey 构造   │ src/adapters/runtime/codex/session-store.js:340      │ TG 入站把 tg_chat_id 翻译成 wxid    │
+ │                   │ buildBindingKey                                      │ 后直接复用                          │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ 入站消息装配      │ src/core/inbound-turn.js buildInboundDraft /         │ 已经 channel-agnostic（除了         │
+ │                   │ assembleRuntimeTurnText                              │ formatWechatLocalTime 一处命名）    │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ 附件落盘          │ src/adapters/channel/weixin/media-receive.js 的      │ 已经写在 stateDir/inbox             │
+ │                   │ buildInboxDirectory                                  │ 通用目录，TG 直接复用               │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ 命令注册          │ src/core/command-registry.js 的 .terminal/.weixin    │ 加 .telegram 即可                   │
+ │                   │ 多端字段模型                                         │                                     │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │                   │                                                      │ 拆分时保留同样的                    │
+ │ 长轮询循环骨架    │ src/core/app.js start() while loop + backoff         │ MAX_CONSECUTIVE_FAILURES /          │
+ │                   │                                                      │ BACKOFF_DELAY_MS 语义               │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ Account           │ src/adapters/channel/weixin/account-store.js         │ TG 镜像一份，文件名                 │
+ │ 持久化样式        │                                                      │ telegram-<botId>.json               │
+ ├───────────────────┼──────────────────────────────────────────────────────┼─────────────────────────────────────┤
+ │ StreamDelivery 多 │ src/core/stream-delivery.js 的 upsertItem /          │ thinking 作为新 item kind           │
+ │  item 编排        │ itemOrder                                            │ 接入，无需改主循环                  │
+ └───────────────────┴──────────────────────────────────────────────────────┴─────────────────────────────────────┘
+
+ └───────────────────┴──────────────────────────────────────────────────────┴─────────────────────────────────────┘
+
+ 不在本次范围
+
+ - TG inline keyboard 一键审批（/yes /no 的按钮版本）—— 等基本通路打通后再加
+ - 把 formatWechatLocalTime 重命名为 formatLocalTime —— 仅命名，不影响功能
+ - 把 ReminderQueueStore 从 adapters/channel/weixin/ 物理移出 —— 现路径上已 channel-agnostic，移动是另一个清理 PR
+
+ 验证
+
+ 每一步都可独立验证，最终联调步骤：
+
+ 1. 回归：步骤 1-3 完成后，仅启用 weixin channel，所有现有命令和发图/收图行为应与改造前完全一致（npm run start + 走一遍
+ /status /new /reminder/timeline 截图）
+ 2. TG 单端联调：步骤 5 完成后，仅启用 TG 通道，/link <code> 绑定，发文本走通一轮 runtime 回复
+ 3. 共享上下文：weixin 发"我叫苏苏" → TG 问"我叫什么" → 应答出"苏苏"（说明同一 thread）
+ 4. 最近活跃路由：weixin 发一句 → reminder 触发 → 回到 weixin；TG 发一句 → reminder 触发 → 回到 TG
+ 5. 思考链：TG 端能看到折叠 blockquote 思考内容；微信端无任何思考泄漏
+ 6. /chunk 隔离：TG 输入 /chunk 50 应回复"该命令不支持当前渠道"，weixin 仍正常工作
+ 7. 掉线弹性：把 TG 网络断开 5 分钟，weixin 端应继续无感工作（步骤 3 的独立 backoff 验证）
+
+
+
+==========================
+
+
+
+
+实施完成。所有 8 步都过了语法检查和 doctor smoke test。下面给你一个使用速览。
+
+  已完成的改动
+
+  新增文件
+
+  - src/core/last-active-channel-store.js — 最近活跃 channel 记忆
+  - src/core/channel-router.js — 多 channel 路由器
+  - src/core/identity-map-store.js — wxid ↔ tg_chat_id 绑定 + 一次性 link code
+  - src/adapters/channel/telegram/ — 完整 TG channel adapter（api / login / account-store / message-utils /
+  media-receive / offset-store / index）
+
+  改动文件
+
+  - src/core/config.js — 加 telegram*/channels/defaultOutboundChannel/identityMapFile/lastActiveChannelFile
+  - src/core/command-registry.js — 加 .telegram[]、buildTelegramHelpText、isCommandSupportedOnChannel、/link /unlink
+  命令
+  - src/core/app.js — 多 channel 并发轮询、按 sender 出站路由、/link /unlink 处理、未绑定 TG 自动引导
+  - src/core/stream-delivery.js — 思考链事件 + capabilities-aware 渲染（TG 用 <blockquote expandable>）
+  - src/adapters/runtime/claudecode/events.js — thinking → runtime.thinking.delta
+  - src/adapters/channel/weixin/index.js — 加 capabilities 字段
+  - src/index.js — login --channel telegram 支持
+
+  使用方式
+
+  # 先在微信端登录（不变）
+  npm run login
+
+  # 注册 TG bot（新）
+  node bin/cyberboss.js login --channel telegram
+
+  # 双端启动
+  $env:CYBERBOSS_CHANNELS = "weixin,telegram"
+  npm start
+
+  联调流程
+
+  1. 微信端发送 /link → 拿到 6 位绑定码
+  2. TG 端发送 /link <code> → 完成绑定，两端共享 thread/sticker/reminder
+  3. 微信发"我叫苏苏" → TG 问"我叫什么" → 应该能记住（同 thread）
+  4. 谁最近发消息，回复就回到那一端；TG 端能看到折叠思考链，微信端不会泄漏
+  5. TG 输入 /chunk 50 → 会被告知该命令不支持
+
+  剩下两件你可以决定：env vars 写到 .env，还是直接 $env: 临时设。要我把 .env.example 也加上 TG 相关条目吗？
+
+
+=======================================
+
+
+
+
+
+代理支持加好了。现在你只需要：
+
+  操作步骤
+
+  1. 打开你的代理客户端，看主界面"端口/Port/入站"，找到本地 HTTP 代理端口
+    - Clash / Mihomo 默认 7890
+    - v2rayN 默认 10809
+    - 看不到 HTTP 但有 SOCKS5 也行（写法略不同，见下）
+  2. .env 里加一行（端口换成你看到的实际值）：
+  CYBERBOSS_TELEGRAM_PROXY=http://127.0.0.1:7890
+  2. 只有 socks5：
+  CYBERBOSS_TELEGRAM_PROXY=socks5://127.0.0.1:7891
+  3. 重启 cyberboss，应该不再看到 fetch failed。
+
+  优先级
+
+  - CYBERBOSS_TELEGRAM_PROXY —— 仅 TG 走代理，推荐（微信不受影响）
+  - HTTPS_PROXY / HTTP_PROXY —— 全局 fallback，没填上面那个时用
+  - 都没填 = 直连
+
+  改动了什么
+
+  - src/adapters/channel/telegram/api.js —— 加 fetchWithProxy helper（用 Node 自带 undici.ProxyAgent），所有出 TG
+  请求都走它
+  - src/adapters/channel/telegram/media-receive.js —— 下载附件也走代理
+  - .env.example —— 增加 CYBERBOSS_TELEGRAM_PROXY 配置说明
+
+
+
+
+==========================
+
+
+
+
+  改了什么
+
+  - weixin api.js — 删掉手动 Content-Length header（让 fetch 自动算，新版 undici 严格校验导致冲突）
+  - telegram api.js — 走代理时改用 undici.fetch 而不是 globalThis.fetch（Node 内置的 undici 和你装的 undici
+  是两个版本，ProxyAgent 接口不兼容；用同一个包的 fetch 就一致了）
+
+  .env 保持你现在的：
+  HTTPS_PROXY=http://127.0.0.1:6850
+  HTTP_PROXY=http://127.0.0.1:6850
+
+
+
+
+=======================
+
+
+
+
+改完了，重启 cyberboss 就能正常发回 TG 了。
+
+  原因
+
+  bindingKey 设计是 workspaceId::accountId::senderId，TG 端为了和微信共享 thread，senderId 写成了 canonical wxid（比如
+  o9cq80wTEhwl-...@im.wechat）。但 TG Bot API 要的 chat_id 是数字（8933190564）。
+
+  之前 sendText/sendTyping/sendFile 直接拿 userId 当 chatId，把 wxid 发给了 TG，TG 当然说 "chat not found"。
+
+  修复
+
+  在 telegram adapter 里加了 resolveChatId(userId, contextToken)：
+  - 优先从 contextToken（格式 tg:<chatId>）解析 → 入站时已经带上了
+  - fallback：如果 userId 本身就是数字（直接 send 测试用），就当 chatId
+  - wxid 这种非数字 userId → 拒收，避免再次乱发
+
+  为啥 contextToken=tg:8933190564 一直就在？看 message-utils.js line 56：入站时就把 chatId 编进了
+  contextToken，stream-delivery 把 contextToken 一路传到 sendText。现在 sendText 终于会读它了。

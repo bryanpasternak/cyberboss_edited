@@ -3,8 +3,9 @@ const { sanitizeProtocolLeakText } = require("../adapters/runtime/codex/protocol
 const CURRENT_REPLY_HEADER = "===== 本轮模型回复 =====";
 
 class StreamDelivery {
-  constructor({ channelAdapter, sessionStore, runtimeId = "", onDeferredSystemReply, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
+  constructor({ channelAdapter, channelRouter = null, sessionStore, runtimeId = "", onDeferredSystemReply, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
     this.channelAdapter = channelAdapter;
+    this.channelRouter = channelRouter;
     this.sessionStore = sessionStore;
     this.runtimeId = normalizeRuntimeId(runtimeId);
     this.systemReplyPolicy = createSystemReplyPolicy(this.runtimeId);
@@ -23,6 +24,31 @@ class StreamDelivery {
     this.runSequence = 0;
   }
 
+  resolveAdapterForTarget(target) {
+    const channelId = normalizeText(target?.channelId);
+    if (channelId && this.channelRouter && typeof this.channelRouter.getChannel === "function") {
+      const channel = this.channelRouter.getChannel(channelId);
+      if (channel) return channel;
+    }
+    if (this.channelRouter && typeof this.channelRouter.pickChannelForSender === "function" && target?.userId) {
+      const channel = this.channelRouter.pickChannelForSender(target.userId);
+      if (channel) return channel;
+    }
+    return this.channelAdapter;
+  }
+
+  resolveCapabilitiesForTarget(target) {
+    const adapter = this.resolveAdapterForTarget(target);
+    if (!adapter || typeof adapter.describe !== "function") {
+      return null;
+    }
+    try {
+      return adapter.describe().capabilities || null;
+    } catch {
+      return null;
+    }
+  }
+
   setReplyTarget(bindingKey, target) {
     if (!bindingKey || !target?.userId || !target?.contextToken) {
       return;
@@ -31,6 +57,7 @@ class StreamDelivery {
       userId: String(target.userId).trim(),
       contextToken: String(target.contextToken).trim(),
       provider: normalizeText(target.provider),
+      channelId: normalizeText(target.channelId),
     });
   }
 
@@ -122,6 +149,21 @@ class StreamDelivery {
           itemId: normalizeText(event.payload.itemId) || `item-${state.itemOrder.length + 1}`,
           text: normalizeLineEndings(event.payload.text),
           completed: false,
+        });
+        return;
+      }
+      case "runtime.thinking.delta": {
+        const state = this.ensureRunState(threadId, turnId);
+        const capabilities = this.resolveCapabilitiesForTarget(state.replyTarget);
+        if (!capabilities?.showThinking) {
+          return;
+        }
+        const itemId = normalizeText(event.payload.itemId) || `thinking-${state.itemOrder.length + 1}`;
+        this.upsertItem(state, {
+          itemId,
+          text: normalizeLineEndings(event.payload.text),
+          completed: true,
+          kind: "thinking",
         });
         return;
       }
@@ -231,7 +273,7 @@ class StreamDelivery {
     });
   }
 
-  upsertItem(state, { itemId, text, completed }) {
+  upsertItem(state, { itemId, text, completed, kind = "" }) {
     if (!text) {
       return;
     }
@@ -241,10 +283,14 @@ class StreamDelivery {
         currentText: "",
         completedText: "",
         completed: false,
+        kind: kind || "",
       });
     }
 
     const current = state.items.get(itemId);
+    if (kind && !current.kind) {
+      current.kind = kind;
+    }
     if (completed) {
       current.currentText = text;
       current.completedText = text;
@@ -375,6 +421,29 @@ class StreamDelivery {
       return;
     }
 
+    if (delivery.kind === "thinking") {
+      const capabilities = this.resolveCapabilitiesForTarget(state.replyTarget);
+      if (!capabilities?.showThinking) {
+        return;
+      }
+      const formatted = capabilities.supportsHtml
+        ? formatThinkingForHtml(delivery.text)
+        : `💭 ${delivery.text}`;
+      const adapter = this.resolveAdapterForTarget(state.replyTarget);
+      const payload = {
+        userId: state.replyTarget.userId,
+        text: prependDeferredPrefix ? buildEffectiveReplyText(state.deferredReplyPrefix, formatted) : formatted,
+        contextToken: state.replyTarget.contextToken,
+        preserveBlock: true,
+      };
+      try {
+        await adapter.sendText(payload);
+      } catch (error) {
+        console.error(`[cyberboss] failed to deliver thinking thread=${state.threadId}: ${error.message}`);
+      }
+      return;
+    }
+
     const baseText = delivery.kind === "action" ? delivery.message : delivery.text;
     if (!baseText) {
       return;
@@ -403,8 +472,9 @@ class StreamDelivery {
 
   async sendTextWithRetry(state, payload, { kind }) {
     const initialTarget = state.replyTarget;
+    const adapter = this.resolveAdapterForTarget(initialTarget);
     try {
-      await this.channelAdapter.sendText(payload);
+      await adapter.sendText(payload);
       return;
     } catch (error) {
       const retryTarget = this.resolveRetriableReplyTarget(initialTarget, error);
@@ -427,13 +497,15 @@ class StreamDelivery {
         if (payload.preserveBlock) {
           retryPayload.preserveBlock = true;
         }
-        await this.channelAdapter.sendText(retryPayload);
+        const retryAdapter = this.resolveAdapterForTarget(retryTarget);
+        await retryAdapter.sendText(retryPayload);
         state.replyTarget = retryTarget;
         if (state.bindingKey) {
           this.replyTargetByBindingKey.set(state.bindingKey, {
             userId: retryTarget.userId,
             contextToken: retryTarget.contextToken,
             provider: retryTarget.provider,
+            channelId: retryTarget.channelId,
           });
         }
       } catch (retryError) {
@@ -482,10 +554,11 @@ class StreamDelivery {
     if (!currentTarget?.userId) {
       return null;
     }
-    if (typeof this.channelAdapter.getKnownContextTokens !== "function") {
+    const adapter = this.resolveAdapterForTarget(currentTarget);
+    if (!adapter || typeof adapter.getKnownContextTokens !== "function") {
       return null;
     }
-    const tokens = this.channelAdapter.getKnownContextTokens();
+    const tokens = adapter.getKnownContextTokens();
     const refreshedContextToken = normalizeText(tokens?.[currentTarget.userId]);
     if (!refreshedContextToken || refreshedContextToken === currentTarget.contextToken) {
       return null;
@@ -494,6 +567,7 @@ class StreamDelivery {
       userId: currentTarget.userId,
       contextToken: refreshedContextToken,
       provider: currentTarget.provider,
+      channelId: currentTarget.channelId,
     };
   }
 
@@ -547,6 +621,7 @@ class StreamDelivery {
       userId: target.userId,
       contextToken: target.contextToken,
       provider: target.provider,
+      channelId: target.channelId,
     };
     state.threadReplyTargetAttached = true;
   }
@@ -593,6 +668,14 @@ function collectPendingReplyDeliveries(state, { force }) {
     }
     const item = state.items.get(itemId);
     if (!item) {
+      continue;
+    }
+    if (item.kind === "thinking") {
+      const sourceText = resolvePlainReplySourceText(item, force);
+      if (!sourceText) {
+        continue;
+      }
+      pending.push({ itemId, kind: "thinking", text: sourceText });
       continue;
     }
     const sourceText = resolvePlainReplySourceText(item, force);
@@ -709,6 +792,7 @@ function normalizeReplyTarget(target) {
     userId: String(target.userId).trim(),
     contextToken: String(target.contextToken).trim(),
     provider: normalizeText(target.provider),
+    channelId: normalizeText(target.channelId),
   };
 }
 
@@ -720,6 +804,22 @@ function trimOuterBlankLines(text) {
   return String(text || "")
     .replace(/^\s*\n+/g, "")
     .replace(/\n+\s*$/g, "");
+}
+
+function escapeHtml(text) {
+  return String(text || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+function formatThinkingForHtml(text) {
+  const normalized = trimOuterBlankLines(normalizeLineEndings(String(text || "")));
+  if (!normalized) {
+    return "";
+  }
+  const escaped = escapeHtml(normalized);
+  return `<blockquote expandable>💭 ${escaped}</blockquote>`;
 }
 
 function sanitizeReplyText(plainReplyText) {

@@ -5,6 +5,8 @@ const fs = require("fs");
 const { createWeixinChannelAdapter } = require("../adapters/channel/weixin");
 const { DEFAULT_MIN_WEIXIN_CHUNK, MAX_MIN_WEIXIN_CHUNK } = require("../adapters/channel/weixin/config-store");
 const { persistIncomingWeixinAttachments } = require("../adapters/channel/weixin/media-receive");
+const { createTelegramChannelAdapter } = require("../adapters/channel/telegram");
+const { persistIncomingTelegramAttachments } = require("../adapters/channel/telegram/media-receive");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { createClaudeCodeRuntimeAdapter } = require("../adapters/runtime/claudecode");
 const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
@@ -21,6 +23,9 @@ const {
 const { resolveVisionContext } = require("../services/vision-context");
 const {
   buildWeixinHelpText,
+  buildTelegramHelpText,
+  buildChannelHelpText,
+  isCommandSupportedOnChannel,
 } = require("./command-registry");
 const { CheckinConfigStore, parseCheckinRangeMinutes, resolveDefaultCheckinRange } = require("./checkin-config-store");
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("./default-targets");
@@ -32,6 +37,9 @@ const { SystemMessageDispatcher } = require("./system-message-dispatcher");
 const { TimelineScreenshotQueueStore } = require("./timeline-screenshot-queue-store");
 const { TurnGateStore } = require("./turn-gate-store");
 const { ReminderQueueStore } = require("../adapters/channel/weixin/reminder-queue-store");
+const { ChannelRouter } = require("./channel-router");
+const { LastActiveChannelStore } = require("./last-active-channel-store");
+const { IdentityMapStore } = require("./identity-map-store");
 const {
   matchesCommandPrefix,
   canonicalizeCommandTokens,
@@ -58,10 +66,43 @@ function createRuntimeAdapter(config) {
   return createCodexRuntimeAdapter(config);
 }
 
+function buildEnabledChannels(config, { identityMapStore }) {
+  const channels = new Map();
+  const requestedIds = Array.isArray(config.channels) && config.channels.length
+    ? config.channels.map((id) => String(id || "").trim().toLowerCase()).filter(Boolean)
+    : [(config.channel || "weixin").toLowerCase()];
+  const seen = new Set();
+  for (const id of requestedIds) {
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    if (id === "weixin") {
+      channels.set("weixin", createWeixinChannelAdapter(config));
+    } else if (id === "telegram") {
+      channels.set("telegram", createTelegramChannelAdapter(config, { identityMapStore }));
+    } else {
+      console.warn(`[cyberboss] unknown channel id=${id}, skipped`);
+    }
+  }
+  if (!channels.size) {
+    channels.set("weixin", createWeixinChannelAdapter(config));
+  }
+  return channels;
+}
+
 class CyberbossApp {
   constructor(config) {
     this.config = config;
-    this.channelAdapter = createWeixinChannelAdapter(config);
+    this.identityMapStore = new IdentityMapStore({ filePath: config.identityMapFile });
+    this.lastActiveChannelStore = new LastActiveChannelStore({ filePath: config.lastActiveChannelFile });
+    this.channels = buildEnabledChannels(config, { identityMapStore: this.identityMapStore });
+    this.channelRouter = new ChannelRouter({
+      channels: [...this.channels.values()],
+      lastActiveStore: this.lastActiveChannelStore,
+      defaultChannelId: config.defaultOutboundChannel || "weixin",
+    });
+    // Backwards-compat alias: project tooling / sticker / timeline still call this.channelAdapter.
+    // Always points to the weixin channel when present, otherwise the first enabled channel.
+    this.channelAdapter = this.channels.get("weixin") || this.channels.values().next().value;
     this.timelineIntegration = createTimelineIntegration(config);
     const projectTooling = createProjectTooling(config, {
       channelAdapter: this.channelAdapter,
@@ -82,8 +123,10 @@ class CyberbossApp {
     this.pendingImageInboundByScope = new Map();
     this.turnBoundaryScopeKeys = new Set();
     this.systemMessageDispatcher = null;
+    this._activeReplyChannel = null;
     this.streamDelivery = new StreamDelivery({
       channelAdapter: this.channelAdapter,
+      channelRouter: this.channelRouter,
       sessionStore: this.runtimeAdapter.getSessionStore(),
       runtimeId: this.runtimeAdapter.describe().id,
       onDeferredSystemReply: (payload) => this.deferSystemReply(payload),
@@ -102,52 +145,85 @@ class CyberbossApp {
     });
   }
 
+  resolveChannelForSender(senderId) {
+    return this.channelRouter.pickChannelForSender(senderId) || this.channelAdapter;
+  }
+
+  resolveChannelById(channelId) {
+    return this.channelRouter.getChannel(channelId) || null;
+  }
+
+  get currentChannel() {
+    return this._activeReplyChannel || this.channelAdapter;
+  }
+
   printDoctor() {
     console.log(JSON.stringify({
       stateDir: this.config.stateDir,
-      channel: this.channelAdapter.describe(),
+      channels: this.channelRouter.describeAll(),
       runtime: this.runtimeAdapter.describe(),
       timeline: this.timelineIntegration.describe(),
       threads: this.threadStateStore.snapshot(),
     }, null, 2));
   }
 
-  async login() {
-    await this.channelAdapter.login();
+  async login(channelId = "") {
+    const targetId = String(channelId || "").trim().toLowerCase()
+      || this.config.channel
+      || "weixin";
+    const channel = this.channels.get(targetId);
+    if (!channel) {
+      throw new Error(`Channel "${targetId}" is not enabled. Set CYBERBOSS_CHANNELS to include it.`);
+    }
+    await channel.login();
   }
 
   printAccounts() {
-    this.channelAdapter.printAccounts();
+    for (const [channelId, channel] of this.channels.entries()) {
+      console.log(`# Channel: ${channelId}`);
+      try {
+        channel.printAccounts();
+      } catch (error) {
+        console.log(`  (failed to read accounts: ${error.message})`);
+      }
+      console.log("");
+    }
   }
 
   async start() {
-    const account = this.channelAdapter.resolveAccount();
-    this.activeAccountId = account.accountId;
+    const accountsByChannelId = new Map();
+    for (const [channelId, channel] of this.channels.entries()) {
+      try {
+        accountsByChannelId.set(channelId, channel.resolveAccount());
+      } catch (error) {
+        throw new Error(`Channel "${channelId}" is not configured: ${error.message}`);
+      }
+    }
+    const weixinAccount = accountsByChannelId.get("weixin") || accountsByChannelId.values().next().value;
+    this.activeAccountId = weixinAccount?.accountId || "";
     this.systemMessageDispatcher = new SystemMessageDispatcher({
       queueStore: this.systemMessageQueue,
       config: this.config,
-      accountId: account.accountId,
+      accountId: this.activeAccountId,
     });
     const runtimeState = await this.runtimeAdapter.initialize();
-    const knownContextTokens = Object.keys(this.channelAdapter.getKnownContextTokens()).length;
-    const syncBuffer = this.channelAdapter.loadSyncBuffer();
     await this.restoreBoundThreadSubscriptions();
 
     console.log("[cyberboss] bootstrap ok");
-    console.log(`[cyberboss] channel=${this.channelAdapter.describe().id}`);
+    for (const [channelId, channel] of this.channels.entries()) {
+      const account = accountsByChannelId.get(channelId) || {};
+      const description = channel.describe();
+      console.log(`[cyberboss] channel=${channelId} account=${account.accountId || "(unknown)"} baseUrl=${description.baseUrl || ""}`);
+    }
     console.log(`[cyberboss] runtime=${this.runtimeAdapter.describe().id}`);
     console.log(`[cyberboss] timeline=${this.timelineIntegration.describe().id}`);
-    console.log(`[cyberboss] account=${account.accountId}`);
-    console.log(`[cyberboss] baseUrl=${account.baseUrl}`);
     console.log(`[cyberboss] workspaceRoot=${this.config.workspaceRoot}`);
-    console.log(`[cyberboss] knownContextTokens=${knownContextTokens}`);
-    console.log(`[cyberboss] syncBuffer=${syncBuffer ? "ready" : "empty"}`);
     console.log(`[cyberboss] runtimeEndpoint=${runtimeState.endpoint || runtimeState.command || "(spawn)"}`);
     console.log(`[cyberboss] runtimeModels=${runtimeState.models?.length || 0}`);
     if (this.config.startWithLocationServer) {
       await this.ensureLocationServerStarted();
     }
-    console.log("[cyberboss] bridge loop started; waiting for WeChat messages.");
+    console.log("[cyberboss] bridge loop started; waiting for inbound messages.");
     if (this.config.startWithCheckin) {
       console.log("[cyberboss] checkin: enabled");
       void runSystemCheckinPoller(this.config).catch((error) => {
@@ -162,54 +238,125 @@ class CyberbossApp {
     });
 
     try {
-      let consecutiveFailures = 0;
-      while (!shutdown.stopped) {
-        try {
-          await Promise.all([
-            this.flushDueReminders(account),
-            this.flushPendingInboundMessages(),
-            this.flushPendingSystemMessages(),
-            this.flushPendingTimelineScreenshots(account),
-          ]);
-          const response = await this.channelAdapter.getUpdates({
-            syncBuffer: this.channelAdapter.loadSyncBuffer(),
-            timeoutMs: this.resolveLongPollTimeoutMs(),
-          });
-          assertWeixinUpdateResponse(response);
-          consecutiveFailures = 0;
-          const messages = sortInboundUpdateMessages(Array.isArray(response?.msgs) ? response.msgs : []);
-          for (const message of messages) {
-            if (shutdown.stopped) {
-              break;
-            }
-            await this.handleIncomingMessage(message);
-          }
-          await Promise.all([
-            this.flushDueReminders(account),
-            this.flushPendingInboundMessages(),
-            this.flushPendingSystemMessages(),
-            this.flushPendingTimelineScreenshots(account),
-          ]);
-        } catch (error) {
-          if (shutdown.stopped) {
-            break;
-          }
-
-          if (isSessionExpiredError(error)) {
-            throw new Error("The WeChat session has expired. Run `npm run login` again.");
-          }
-
-          consecutiveFailures += 1;
-          console.error(`[cyberboss] poll failed: ${formatErrorMessage(error)}`);
-          await sleep(consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ? BACKOFF_DELAY_MS : RETRY_DELAY_MS);
-        }
-      }
+      const pollers = [...this.channels.entries()].map(([channelId, channel]) => this.runChannelPollLoop({
+        shutdown,
+        channelId,
+        channel,
+        weixinAccount,
+      }));
+      await Promise.all(pollers);
     } finally {
       shutdown.dispose();
       this.clearPendingImageInboundTimers();
       await this.closeLocationServer();
       await this.runtimeAdapter.close();
     }
+  }
+
+  async runChannelPollLoop({ shutdown, channelId, channel, weixinAccount }) {
+    let consecutiveFailures = 0;
+    const isWeixinChannel = channelId === "weixin";
+    while (!shutdown.stopped) {
+      try {
+        if (isWeixinChannel && weixinAccount) {
+          await Promise.all([
+            this.flushDueReminders(weixinAccount),
+            this.flushPendingInboundMessages(),
+            this.flushPendingSystemMessages(),
+            this.flushPendingTimelineScreenshots(weixinAccount),
+          ]);
+        }
+        const requestArgs = { timeoutMs: this.resolveLongPollTimeoutMs() };
+        if (isWeixinChannel) {
+          requestArgs.syncBuffer = channel.loadSyncBuffer();
+        }
+        const response = await channel.getUpdates(requestArgs);
+        if (isWeixinChannel) {
+          assertWeixinUpdateResponse(response);
+        }
+        consecutiveFailures = 0;
+        const messages = isWeixinChannel
+          ? sortInboundUpdateMessages(Array.isArray(response?.msgs) ? response.msgs : [])
+          : (Array.isArray(response?.msgs) ? response.msgs : []);
+        for (const message of messages) {
+          if (shutdown.stopped) break;
+          await this.handleIncomingMessageFromChannel(channelId, channel, message);
+        }
+        if (isWeixinChannel && weixinAccount) {
+          await Promise.all([
+            this.flushDueReminders(weixinAccount),
+            this.flushPendingInboundMessages(),
+            this.flushPendingSystemMessages(),
+            this.flushPendingTimelineScreenshots(weixinAccount),
+          ]);
+        }
+      } catch (error) {
+        if (shutdown.stopped) break;
+        if (isWeixinChannel && isSessionExpiredError(error)) {
+          throw new Error("The WeChat session has expired. Run `npm run login` again.");
+        }
+        consecutiveFailures += 1;
+        const causeText = error?.cause
+          ? ` cause=${error.cause.code || ""} ${error.cause.message || error.cause}`
+          : "";
+        console.error(`[cyberboss] channel=${channelId} poll failed: ${formatErrorMessage(error)}${causeText}`);
+        await sleep(consecutiveFailures >= MAX_CONSECUTIVE_FAILURES ? BACKOFF_DELAY_MS : RETRY_DELAY_MS);
+      }
+    }
+  }
+
+  async handleIncomingMessageFromChannel(channelId, channel, message) {
+    const normalized = channel.normalizeIncomingMessage(message);
+    if (!normalized) {
+      return;
+    }
+    if (channelId === "telegram" && normalized.canonicalSenderId === "" && normalized.externalSenderId) {
+      await this.handleUnlinkedTelegramInbound(channel, normalized);
+      return;
+    }
+    this.lastActiveChannelStore.mark(normalized.senderId, channelId);
+    this.primeDeferredRepliesForSender(normalized);
+    await this.handlePreparedMessage(normalized, { allowCommands: true, channelId, channel });
+  }
+
+  async handleUnlinkedTelegramInbound(channel, normalized) {
+    const text = String(normalized.text || "").trim();
+    const argMatch = text.match(/^\/link\s+([A-Z0-9]{4,12})\s*$/i);
+    if (argMatch) {
+      const consumed = this.identityMapStore.consumeLinkCode(argMatch[1]);
+      if (!consumed) {
+        await channel.sendText({
+          userId: normalized.chatId,
+          text: "❌ 这个 link code 无效或已过期。请到微信端重新发送 /link。",
+        }).catch(() => {});
+        return;
+      }
+      this.identityMapStore.link({
+        channel: "telegram",
+        externalId: normalized.externalSenderId,
+        canonicalSenderId: consumed.canonicalSenderId,
+        canonicalAccountId: consumed.canonicalAccountId || "",
+        metadata: {
+          username: normalized.senderProfile?.username || "",
+          firstName: normalized.senderProfile?.firstName || "",
+        },
+      });
+      this.lastActiveChannelStore.mark(consumed.canonicalSenderId, "telegram");
+      await channel.sendText({
+        userId: normalized.chatId,
+        text: `✅ 已绑定到身份 ${consumed.canonicalSenderId}。两端共享同一份对话上下文，最近活跃端会收到回复。`,
+      }).catch(() => {});
+      return;
+    }
+    await channel.sendText({
+      userId: normalized.chatId,
+      text: [
+        "👋 你还没有绑定身份。",
+        "请先在微信端发送 /link 获取 6 位绑定码，",
+        "然后在这里发送：/link <code> 完成绑定。",
+        "码 10 分钟内有效。",
+      ].join("\n"),
+    }).catch(() => {});
   }
 
   async ensureLocationServerStarted() {
@@ -323,13 +470,9 @@ class CyberbossApp {
   }
 
   async handleIncomingMessage(message) {
-    const normalized = this.channelAdapter.normalizeIncomingMessage(message);
-    if (!normalized) {
-      return;
-    }
-
-    this.primeDeferredRepliesForSender(normalized);
-    await this.handlePreparedMessage(normalized, { allowCommands: true });
+    const channel = this.channels.get("weixin");
+    if (!channel) return;
+    return this.handleIncomingMessageFromChannel("weixin", channel, message);
   }
 
   deferSystemReply({ threadId = "", userId = "", text = "", error = null, kind = "plain_reply" }) {
@@ -365,7 +508,9 @@ class CyberbossApp {
     );
   }
 
-  async handlePreparedMessage(normalized, { allowCommands }) {
+  async handlePreparedMessage(normalized, { allowCommands, channelId = "", channel = null } = {}) {
+    const sourceChannelId = String(channelId || normalized?.provider || "").trim().toLowerCase() || "weixin";
+    const sourceChannel = channel || this.resolveChannelById(sourceChannelId) || this.channelAdapter;
     const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
       workspaceId: normalized.workspaceId,
       accountId: normalized.accountId,
@@ -375,18 +520,22 @@ class CyberbossApp {
       userId: normalized.senderId,
       contextToken: normalized.contextToken,
       provider: normalized.provider,
+      channelId: sourceChannelId,
     });
 
     const command = parseChannelCommand(normalized.text);
     if (allowCommands && command) {
-      await this.dispatchChannelCommand(normalized, command);
+      await this.dispatchChannelCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
       return;
     }
 
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
-    const prepared = await this.prepareIncomingMessageForRuntime(normalized, workspaceRoot);
+    const prepared = await this.prepareIncomingMessageForRuntime(normalized, workspaceRoot, { channelId: sourceChannelId, channel: sourceChannel });
     if (!prepared) {
       return;
+    }
+    if (!prepared.channelId) {
+      prepared.channelId = sourceChannelId;
     }
 
     if (shouldBatchImageOnlyInbound(prepared)) {
@@ -427,7 +576,10 @@ class CyberbossApp {
 
   async dispatchPreparedTurn({ bindingKey, workspaceRoot, prepared }) {
     const pendingScopeKey = this.turnGateStore.begin(bindingKey, workspaceRoot);
-    await this.channelAdapter.sendTyping({
+    const outboundChannel = this.resolveChannelById(prepared?.channelId)
+      || this.resolveChannelForSender(prepared?.senderId)
+      || this.channelAdapter;
+    await outboundChannel.sendTyping({
       userId: prepared.senderId,
       status: 1,
       contextToken: prepared.contextToken,
@@ -479,7 +631,7 @@ class CyberbossApp {
       this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
       const messageText = error instanceof Error ? error.message : String(error || "unknown error");
       console.error(`[cyberboss] dispatchPreparedTurn failed workspace=${workspaceRoot} binding=${bindingKey} error=${messageText}`);
-      await this.channelAdapter.sendText({
+      await outboundChannel.sendText({
         userId: prepared.senderId,
         text: `❌ Request failed\n${messageText}`,
         contextToken: prepared.contextToken,
@@ -539,7 +691,10 @@ class CyberbossApp {
     current.messages.push(clonePreparedInboundMessage(prepared));
     this.pendingImageInboundByScope.set(scopeKey, current);
     this.schedulePendingImageInboundFlush(scopeKey, bindingKey, workspaceRoot);
-    void this.channelAdapter.sendTyping({
+    const inboundChannel = this.resolveChannelById(prepared?.channelId)
+      || this.resolveChannelForSender(prepared?.senderId)
+      || this.channelAdapter;
+    void inboundChannel.sendTyping({
       userId: prepared.senderId,
       status: 1,
       contextToken: prepared.contextToken,
@@ -662,7 +817,10 @@ class CyberbossApp {
       receivedAt: prepared.receivedAt,
     });
     this.pendingInboundByScope.set(scopeKey, current);
-    void this.channelAdapter.sendTyping({
+    const inboundChannel = this.resolveChannelById(prepared?.channelId)
+      || this.resolveChannelForSender(prepared?.senderId)
+      || this.channelAdapter;
+    void inboundChannel.sendTyping({
       userId: prepared.senderId,
       status: 1,
       contextToken: prepared.contextToken,
@@ -777,7 +935,7 @@ class CyberbossApp {
     };
   }
 
-  async prepareIncomingMessageForRuntime(normalized, workspaceRoot) {
+  async prepareIncomingMessageForRuntime(normalized, workspaceRoot, { channelId = "", channel = null } = {}) {
     if (normalized?.provider === "system") {
       return {
         ...normalized,
@@ -793,16 +951,32 @@ class CyberbossApp {
       return buildInboundDraft(normalized);
     }
 
-    const persisted = await persistIncomingWeixinAttachments({
-      attachments,
-      stateDir: this.config.stateDir,
-      cdnBaseUrl: this.config.weixinCdnBaseUrl,
-      messageId: normalized.messageId,
-      receivedAt: normalized.receivedAt,
-    });
+    const sourceChannelId = String(channelId || normalized?.provider || "").trim().toLowerCase() || "weixin";
+    let persisted;
+    if (sourceChannelId === "telegram") {
+      const tgChannel = channel || this.resolveChannelById("telegram");
+      const account = tgChannel ? tgChannel.resolveAccount() : null;
+      persisted = await persistIncomingTelegramAttachments({
+        attachments,
+        stateDir: this.config.stateDir,
+        apiBaseUrl: account?.apiBaseUrl || this.config.telegramApiBaseUrl,
+        botToken: account?.botToken || this.config.telegramBotToken,
+        receivedAt: normalized.receivedAt,
+      });
+    } else {
+      persisted = await persistIncomingWeixinAttachments({
+        attachments,
+        stateDir: this.config.stateDir,
+        cdnBaseUrl: this.config.weixinCdnBaseUrl,
+        messageId: normalized.messageId,
+        receivedAt: normalized.receivedAt,
+      });
+    }
+
+    const responseChannel = channel || this.resolveChannelById(sourceChannelId) || this.channelAdapter;
 
     if (!persisted.saved.length && persisted.failed.length && !String(normalized.text || "").trim()) {
-      await this.channelAdapter.sendText({
+      await responseChannel.sendText({
         userId: normalized.senderId,
         text: `⚠️ Failed to receive image or attachment\n${persisted.failed.map((item) => item.reason).join("\n")}`,
         contextToken: normalized.contextToken,
@@ -816,7 +990,7 @@ class CyberbossApp {
       attachmentFailures: persisted.failed,
     });
     if (!prepared.originalText && !prepared.attachments.length && prepared.attachmentFailures.length) {
-      await this.channelAdapter.sendText({
+      await responseChannel.sendText({
         userId: normalized.senderId,
         text: `⚠️ Failed to receive image or attachment\n${persisted.failed.map((item) => item.reason).join("\n")}`,
         contextToken: normalized.contextToken,
@@ -867,11 +1041,12 @@ class CyberbossApp {
       } catch (error) {
         const messageText = error instanceof Error ? error.message : String(error || "unknown error");
         console.error(`[cyberboss] timeline screenshot failed job=${job.id} ${messageText}`);
-        await this.channelAdapter.sendTyping({
+        const errorChannel = this.resolveChannelForSender(job.senderId) || this.channelAdapter;
+        await errorChannel.sendTyping({
           userId: job.senderId,
           status: 0,
         }).catch(() => {});
-        await this.channelAdapter.sendText({
+        await errorChannel.sendText({
           userId: job.senderId,
           text: `❌ Timeline screenshot failed\n${messageText}`,
           preserveBlock: true,
@@ -934,9 +1109,24 @@ class CyberbossApp {
   }
 
   async dispatchSystemMessage(message) {
-    const prepared = this.systemMessageDispatcher?.buildPreparedMessage(message, this.channelAdapter.getKnownContextTokens()[message.senderId] || "");
+    const senderId = String(message?.senderId || "").trim();
+    const channelForSender = senderId ? this.resolveChannelForSender(senderId) : null;
+    const tokenSource = channelForSender && typeof channelForSender.getKnownContextTokens === "function"
+      ? channelForSender
+      : this.channelAdapter;
+    const contextTokenForSender = (tokenSource.getKnownContextTokens?.() || {})[senderId] || "";
+    const prepared = this.systemMessageDispatcher?.buildPreparedMessage(message, contextTokenForSender);
     if (!prepared) {
       throw new Error("system message could not be prepared");
+    }
+    if (channelForSender && !prepared.channelId) {
+      try {
+        prepared.channelId = channelForSender.describe()?.capabilities?.channelId
+          || channelForSender.describe()?.id
+          || "weixin";
+      } catch {
+        prepared.channelId = "weixin";
+      }
     }
     const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
       workspaceId: prepared.workspaceId,
@@ -950,59 +1140,149 @@ class CyberbossApp {
     return this.dispatchPreparedTurn({ bindingKey, workspaceRoot, prepared });
   }
 
-  async dispatchChannelCommand(normalized, command) {
-    switch (command.name) {
-      case "bind":
-        await this.handleBindCommand(normalized, command);
-        return;
-      case "status":
-        await this.handleStatusCommand(normalized);
-        return;
-      case "new":
-        await this.handleNewCommand(normalized);
-        return;
-      case "reread":
-        await this.handleRereadCommand(normalized);
-        return;
-      case "compact":
-        await this.handleCompactCommand(normalized);
-        return;
-      case "switch":
-        await this.handleSwitchCommand(normalized, command);
-        return;
-      case "stop":
-        await this.handleStopCommand(normalized);
-        return;
-      case "checkin":
-        await this.handleCheckinCommand(normalized, command);
-        return;
-      case "chunk":
-        await this.handleChunkCommand(normalized, command);
-        return;
-      case "yes":
-      case "always":
-      case "no":
-        await this.handleApprovalCommand(normalized, command);
-        return;
-      case "model":
-        await this.handleModelCommand(normalized, command);
-        return;
-      case "star":
-        await this.handleStarCommand(normalized);
-        return;
-      case "help":
-        await this.handleHelpCommand(normalized);
-        return;
-      case "memory":
-        await this.handleMemoryCommand(normalized, command);
-        return;
-      default:
-        await this.channelAdapter.sendText({
+  async dispatchChannelCommand(normalized, command, { channelId = "weixin", channel = null } = {}) {
+    const sourceChannelId = String(channelId || "weixin").trim().toLowerCase() || "weixin";
+    const sourceChannel = channel || this.resolveChannelById(sourceChannelId) || this.channelAdapter;
+    this._activeReplyChannel = sourceChannel;
+    try {
+      if (!isCommandSupportedOnChannel(command.name, sourceChannelId)) {
+        await sourceChannel.sendText({
           userId: normalized.senderId,
-          text: buildWeixinHelpText(),
+          text: `⚠️ 该命令在当前渠道不支持: /${command.name}\n请输入 /help 查看可用命令。`,
+          contextToken: normalized.contextToken,
+        }).catch(() => {});
+        return;
+      }
+      switch (command.name) {
+        case "bind":
+          await this.handleBindCommand(normalized, command);
+          return;
+        case "status":
+          await this.handleStatusCommand(normalized);
+          return;
+        case "new":
+          await this.handleNewCommand(normalized);
+          return;
+        case "reread":
+          await this.handleRereadCommand(normalized);
+          return;
+        case "compact":
+          await this.handleCompactCommand(normalized);
+          return;
+        case "switch":
+          await this.handleSwitchCommand(normalized, command);
+          return;
+        case "stop":
+          await this.handleStopCommand(normalized);
+          return;
+        case "checkin":
+          await this.handleCheckinCommand(normalized, command);
+          return;
+        case "chunk":
+          await this.handleChunkCommand(normalized, command);
+          return;
+        case "yes":
+        case "always":
+        case "no":
+          await this.handleApprovalCommand(normalized, command);
+          return;
+        case "model":
+          await this.handleModelCommand(normalized, command);
+          return;
+        case "star":
+          await this.handleStarCommand(normalized);
+          return;
+        case "help":
+          await this.handleHelpCommand(normalized, sourceChannelId);
+          return;
+        case "memory":
+          await this.handleMemoryCommand(normalized, command);
+          return;
+        case "link":
+          await this.handleLinkCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
+          return;
+        case "unlink":
+          await this.handleUnlinkCommand(normalized, { channelId: sourceChannelId, channel: sourceChannel });
+          return;
+        default:
+          await sourceChannel.sendText({
+            userId: normalized.senderId,
+            text: buildChannelHelpText(sourceChannelId),
+            contextToken: normalized.contextToken,
+          });
+      }
+    } finally {
+      this._activeReplyChannel = null;
+    }
+  }
+
+  async handleLinkCommand(normalized, command, { channelId, channel }) {
+    const arg = normalizeCommandArgument(command.args).toUpperCase();
+    if (arg) {
+      const consumed = this.identityMapStore.consumeLinkCode(arg);
+      if (!consumed) {
+        await channel.sendText({
+          userId: normalized.senderId,
+          text: "❌ 这个 link code 无效或已过期。",
           contextToken: normalized.contextToken,
         });
+        return;
+      }
+      const externalId = channelId === "telegram"
+        ? normalized.externalSenderId || ""
+        : normalized.senderId;
+      this.identityMapStore.link({
+        channel: channelId,
+        externalId,
+        canonicalSenderId: consumed.canonicalSenderId,
+        canonicalAccountId: consumed.canonicalAccountId || "",
+        metadata: channelId === "telegram"
+          ? { username: normalized.senderProfile?.username || "", firstName: normalized.senderProfile?.firstName || "" }
+          : {},
+      });
+      this.lastActiveChannelStore.mark(consumed.canonicalSenderId, channelId);
+      await channel.sendText({
+        userId: normalized.senderId,
+        text: `✅ 已绑定。两端从此共享同一份对话上下文。`,
+        contextToken: normalized.contextToken,
+      });
+      return;
     }
+    const result = this.identityMapStore.issueLinkCode({
+      canonicalSenderId: normalized.senderId,
+      canonicalAccountId: normalized.accountId || "",
+      channel: channelId,
+    });
+    if (!result) {
+      await channel.sendText({
+        userId: normalized.senderId,
+        text: "❌ 无法生成 link code。",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+    const expiresAt = new Date(result.expiresAtMs).toLocaleTimeString("zh-CN", { hour12: false });
+    await channel.sendText({
+      userId: normalized.senderId,
+      text: [
+        `🔗 Link code: ${result.code}`,
+        `有效期至 ${expiresAt}（10 分钟）`,
+        "在另一端发送：/link " + result.code + " 完成绑定。",
+      ].join("\n"),
+      contextToken: normalized.contextToken,
+    });
+  }
+
+  async handleUnlinkCommand(normalized, { channelId, channel }) {
+    const externalId = channelId === "telegram"
+      ? normalized.externalSenderId || ""
+      : normalized.senderId;
+    const removed = this.identityMapStore.unlink({ channel: channelId, externalId });
+    await channel.sendText({
+      userId: normalized.senderId,
+      text: removed ? "✅ 已解除当前渠道的身份绑定。" : "💡 当前渠道没有绑定记录。",
+      contextToken: normalized.contextToken,
+    });
   }
 
   async handleMemoryCommand(normalized, command) {
@@ -1019,7 +1299,7 @@ class CyberbossApp {
     if (!reply) {
       reply = "未知 memory 命令。输入 /memory help 查看帮助。";
     }
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: reply,
       contextToken: normalized.contextToken,
@@ -1029,7 +1309,7 @@ class CyberbossApp {
   async handleBindCommand(normalized, command) {
     const workspaceRoot = normalizeWorkspacePath(command.args);
     if (!workspaceRoot) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 Usage: /bind /absolute/path",
         contextToken: normalized.contextToken,
@@ -1038,7 +1318,7 @@ class CyberbossApp {
     }
 
     if (!isAbsoluteWorkspacePath(workspaceRoot)) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "⚠️ Only absolute paths are supported for /bind.",
         contextToken: normalized.contextToken,
@@ -1047,7 +1327,7 @@ class CyberbossApp {
     }
 
     if (!isPathWithinAllowedDirectories(workspaceRoot)) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "⚠️ The path must be within your home directory or the current working directory.",
         contextToken: normalized.contextToken,
@@ -1057,7 +1337,7 @@ class CyberbossApp {
 
     const stats = await fs.promises.stat(workspaceRoot).catch(() => null);
     if (!stats?.isDirectory()) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `❌ Workspace does not exist\n${workspaceRoot}`,
         contextToken: normalized.contextToken,
@@ -1071,7 +1351,7 @@ class CyberbossApp {
       senderId: normalized.senderId,
     });
     this.runtimeAdapter.getSessionStore().setActiveWorkspaceRoot(bindingKey, workspaceRoot);
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Workspace bound\nworkspace: ${workspaceRoot}`,
       contextToken: normalized.contextToken,
@@ -1111,7 +1391,7 @@ class CyberbossApp {
       claudeContextWindow: this.config.claudeContextWindow,
       claudeMaxOutputTokens: this.config.claudeMaxOutputTokens,
     }));
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: lines.join("\n"),
       contextToken: normalized.contextToken,
@@ -1129,7 +1409,7 @@ class CyberbossApp {
       await this.runtimeAdapter.startFreshThreadDraft({ bindingKey, workspaceRoot });
     }
     this.runtimeAdapter.getSessionStore().clearThreadIdForWorkspace(bindingKey, workspaceRoot);
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Switched to a fresh thread draft\nworkspace: ${workspaceRoot}`,
       contextToken: normalized.contextToken,
@@ -1146,7 +1426,7 @@ class CyberbossApp {
     const sessionStore = this.runtimeAdapter.getSessionStore();
     const threadId = sessionStore.getThreadIdForWorkspace(bindingKey, workspaceRoot);
     if (!threadId) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 There is no active thread yet. Send a normal message first.",
         contextToken: normalized.contextToken,
@@ -1168,7 +1448,7 @@ class CyberbossApp {
         modelProvider: runtimeParams.modelProvider,
       });
     } catch (error) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `❌ Reread failed\n${error instanceof Error ? error.message : String(error || "unknown error")}`,
         contextToken: normalized.contextToken,
@@ -1186,7 +1466,7 @@ class CyberbossApp {
     const sessionStore = this.runtimeAdapter.getSessionStore();
     const threadId = sessionStore.getThreadIdForWorkspace(bindingKey, workspaceRoot);
     if (!threadId) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 There is no active thread yet. Send a normal message first.",
         contextToken: normalized.contextToken,
@@ -1214,13 +1494,13 @@ class CyberbossApp {
           });
         }
       });
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `🗜️ Compact request sent\nthread: ${threadId}`,
         contextToken: normalized.contextToken,
       });
     } catch (error) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `❌ Compact failed\n${error instanceof Error ? error.message : String(error || "unknown error")}`,
         contextToken: normalized.contextToken,
@@ -1231,7 +1511,7 @@ class CyberbossApp {
   async handleSwitchCommand(normalized, command) {
     const targetThreadId = normalizeThreadId(command.args);
     if (!targetThreadId) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 Usage: /switch <threadId>",
         contextToken: normalized.contextToken,
@@ -1258,7 +1538,7 @@ class CyberbossApp {
       workspaceRoot,
       resumed?.threadId || targetThreadId,
     );
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Thread switched\nworkspace: ${workspaceRoot}\nthread: ${resumed?.threadId || targetThreadId}`,
       contextToken: normalized.contextToken,
@@ -1275,7 +1555,7 @@ class CyberbossApp {
     const threadId = this.runtimeAdapter.getSessionStore().getThreadIdForWorkspace(bindingKey, workspaceRoot);
     const threadState = threadId ? this.threadStateStore.getThreadState(threadId) : null;
     if (!threadId || !threadState?.turnId || !["running", "waiting_approval"].includes(threadState.status)) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 There is no running thread right now.",
         contextToken: normalized.contextToken,
@@ -1288,7 +1568,7 @@ class CyberbossApp {
       turnId: threadState.turnId,
       workspaceRoot,
     });
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `⏹️ Stop request sent\nthread: ${threadId}`,
       contextToken: normalized.contextToken,
@@ -1299,7 +1579,7 @@ class CyberbossApp {
     const rangeInput = normalizeCommandArgument(command.args);
     if (!rangeInput) {
       const currentRange = this.checkinConfigStore.getRange(resolveDefaultCheckinRange());
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `⏰ Current check-in interval is ${Math.round(currentRange.minIntervalMs / 60000)}-${Math.round(currentRange.maxIntervalMs / 60000)} minutes.`,
         contextToken: normalized.contextToken,
@@ -1309,7 +1589,7 @@ class CyberbossApp {
 
     const parsedRange = parseCheckinRangeMinutes(rangeInput);
     if (!parsedRange) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "💡 Usage: /checkin <min>-<max>",
         contextToken: normalized.contextToken,
@@ -1321,7 +1601,7 @@ class CyberbossApp {
       minIntervalMs: parsedRange.minMinutes * 60_000,
       maxIntervalMs: parsedRange.maxMinutes * 60_000,
     });
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Check-in interval reset to ${parsedRange.minMinutes}-${parsedRange.maxMinutes} minutes and will apply on the next polling cycle.`,
       contextToken: normalized.contextToken,
@@ -1331,8 +1611,8 @@ class CyberbossApp {
   async handleChunkCommand(normalized, command) {
     const arg = normalizeCommandArgument(command.args);
     if (!arg) {
-      const current = this.channelAdapter.getMinChunkChars?.() ?? DEFAULT_MIN_WEIXIN_CHUNK;
-      await this.channelAdapter.sendText({
+      const current = this.currentChannel.getMinChunkChars?.() ?? DEFAULT_MIN_WEIXIN_CHUNK;
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `💡 Current minimum merge chunk is ${current} characters. Usage: /chunk <number> (e.g. /chunk 50)`,
         contextToken: normalized.contextToken,
@@ -1341,15 +1621,15 @@ class CyberbossApp {
     }
     const parsed = Number.parseInt(arg, 10);
     if (!Number.isFinite(parsed) || parsed < 1 || parsed > MAX_MIN_WEIXIN_CHUNK) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `⚠️  Invalid value. Please provide a number between 1 and ${MAX_MIN_WEIXIN_CHUNK}.`,
         contextToken: normalized.contextToken,
       });
       return;
     }
-    const updated = this.channelAdapter.setMinChunkChars?.(parsed) ?? parsed;
-    await this.channelAdapter.sendText({
+    const updated = this.currentChannel.setMinChunkChars?.(parsed) ?? parsed;
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Minimum merge chunk set to ${updated} characters. Shorter fragments will be merged into one message up to this size.`,
       contextToken: normalized.contextToken,
@@ -1367,7 +1647,7 @@ class CyberbossApp {
     const threadState = threadId ? this.threadStateStore.getThreadState(threadId) : null;
     const approval = threadState?.pendingApproval || null;
   if (!threadId || approval?.requestId == null || String(approval.requestId).trim() === "") {
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: "💡 There is no pending approval request right now.",
       contextToken: normalized.contextToken,
@@ -1376,7 +1656,7 @@ class CyberbossApp {
     }
 
     if (approval?.kind === "mcp_tool_call" && command.name === "always") {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "⚠️ Persistent approval for this Codex MCP tool request is not available from WeChat.",
         contextToken: normalized.contextToken,
@@ -1386,7 +1666,7 @@ class CyberbossApp {
 
     const approvalResponse = buildApprovalResponsePayload(approval, command.name);
     if (!approvalResponse) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: "⚠️ This Codex MCP request cannot be answered from WeChat yet.",
         contextToken: normalized.contextToken,
@@ -1406,7 +1686,7 @@ class CyberbossApp {
     }
     this.threadStateStore.resolveApproval(threadId, "running");
     const text = buildApprovalResponseText(approval, command.name, approvalResponse);
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text,
       contextToken: normalized.contextToken,
@@ -1434,7 +1714,7 @@ class CyberbossApp {
       } else {
         lines.push("Available models: (not available)");
       }
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: lines.join("\n"),
         contextToken: normalized.contextToken,
@@ -1448,7 +1728,7 @@ class CyberbossApp {
       matched = { model: query };
     }
     if (!matched) {
-      await this.channelAdapter.sendText({
+      await this.currentChannel.sendText({
         userId: normalized.senderId,
         text: `❌ Model not found\n${query}`,
         contextToken: normalized.contextToken,
@@ -1459,7 +1739,7 @@ class CyberbossApp {
     sessionStore.setRuntimeParamsForWorkspace(bindingKey, workspaceRoot, {
       model: matched.model,
     });
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: `✅ Model switched\nworkspace: ${workspaceRoot}\nmodel: ${matched.model}`,
       contextToken: normalized.contextToken,
@@ -1467,7 +1747,7 @@ class CyberbossApp {
   }
 
   async handleStarCommand(normalized) {
-    await this.channelAdapter.sendText({
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
       text: [
         "⭐️ Liked this project? Throw me a star on GitHub!",
@@ -1477,17 +1757,17 @@ class CyberbossApp {
       ].join("\n"),
       contextToken: normalized.contextToken,
     });
-    await this.channelAdapter.sendFile({
+    await this.currentChannel.sendFile({
       userId: normalized.senderId,
       filePath: path.join(__dirname, "../../assets/star-guide.jpg"),
       contextToken: normalized.contextToken,
     }).catch(() => {});
   }
 
-  async handleHelpCommand(normalized) {
-    await this.channelAdapter.sendText({
+  async handleHelpCommand(normalized, channelId = "weixin") {
+    await this.currentChannel.sendText({
       userId: normalized.senderId,
-      text: buildWeixinHelpText(),
+      text: buildChannelHelpText(channelId),
       contextToken: normalized.contextToken,
     });
   }
@@ -1547,7 +1827,8 @@ class CyberbossApp {
         }
         await this.flushPendingSystemMessages();
         if (pendingOperation?.kind === "compact" && event.type === "runtime.turn.completed") {
-          await this.channelAdapter.sendText({
+          const compactChannel = this.resolveChannelForSender(pendingOperation.userId) || this.channelAdapter;
+          await compactChannel.sendText({
             userId: pendingOperation.userId,
             text: `✅ Compact finished\nthread: ${event.payload.threadId}`,
             contextToken: pendingOperation.contextToken,
@@ -1620,7 +1901,10 @@ class CyberbossApp {
     if (!target) {
       return;
     }
-    await this.channelAdapter.sendTyping({
+    const channel = this.resolveChannelById(target.channelId)
+      || this.resolveChannelForSender(target.userId)
+      || this.channelAdapter;
+    await channel.sendTyping({
       userId: target.userId,
       status: 0,
       contextToken: target.contextToken,
@@ -1635,7 +1919,10 @@ class CyberbossApp {
     if (!target) {
       return;
     }
-    await this.channelAdapter.sendText({
+    const channel = this.resolveChannelById(target.channelId)
+      || this.resolveChannelForSender(target.userId)
+      || this.channelAdapter;
+    await channel.sendText({
       userId: target.userId,
       text: normalizeText(text) || "❌ Execution failed",
       contextToken: target.contextToken,
@@ -1653,12 +1940,15 @@ class CyberbossApp {
     console.log(
       `[cyberboss] approval prompt sending binding=${bindingKey} user=${target.userId} requestId=${approval?.requestId || ""}`
     );
-    await this.channelAdapter.sendTyping({
+    const channel = this.resolveChannelById(target.channelId)
+      || this.resolveChannelForSender(target.userId)
+      || this.channelAdapter;
+    await channel.sendTyping({
       userId: target.userId,
       status: 0,
       contextToken: target.contextToken,
     }).catch(() => {});
-    await this.channelAdapter.sendText({
+    await channel.sendText({
       userId: target.userId,
       text: buildApprovalPromptText(approval),
       contextToken: target.contextToken,
@@ -1708,14 +1998,37 @@ class CyberbossApp {
     if (!userId) {
       return null;
     }
-    const contextToken = this.channelAdapter.getKnownContextTokens()[userId] || "";
+    const channel = this.resolveChannelForSender(userId) || this.channelAdapter;
+    const channelDescription = (() => {
+      try { return channel.describe(); } catch { return null; }
+    })();
+    const channelId = channelDescription?.capabilities?.channelId
+      || channelDescription?.id
+      || "weixin";
+
+    if (channelId === "telegram") {
+      const bindings = this.identityMapStore.listBindingsForCanonical(userId);
+      const tgBinding = bindings.find((entry) => entry.channel === "telegram");
+      if (!tgBinding) {
+        return null;
+      }
+      return {
+        userId: tgBinding.externalId,
+        contextToken: `tg:${tgBinding.externalId}`,
+        provider: "telegram",
+        channelId: "telegram",
+      };
+    }
+
+    const contextToken = (channel.getKnownContextTokens?.() || {})[userId] || "";
     if (!contextToken) {
       return null;
     }
     return {
       userId,
       contextToken,
-      provider: "weixin",
+      provider: channelId,
+      channelId,
     };
   }
 }
@@ -1732,6 +2045,7 @@ function normalizeReplyTarget(target) {
     userId: String(target.userId).trim(),
     contextToken: String(target.contextToken).trim(),
     provider: normalizeText(target.provider),
+    channelId: normalizeText(target.channelId),
   };
 }
 

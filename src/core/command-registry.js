@@ -8,6 +8,7 @@ const COMMAND_GROUPS = [
         summary: "Start WeChat QR login and save the account",
         terminal: ["login"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -15,6 +16,7 @@ const COMMAND_GROUPS = [
         summary: "List locally saved accounts",
         terminal: ["accounts"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -22,6 +24,7 @@ const COMMAND_GROUPS = [
         summary: "Start the current channel/runtime main loop",
         terminal: ["start"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -29,6 +32,7 @@ const COMMAND_GROUPS = [
         summary: "Start the shared app-server and shared WeChat bridge",
         terminal: ["shared start"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -36,6 +40,7 @@ const COMMAND_GROUPS = [
         summary: "Attach to the shared thread currently bound in WeChat",
         terminal: ["shared open"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -43,6 +48,7 @@ const COMMAND_GROUPS = [
         summary: "Show the shared app-server and bridge status",
         terminal: ["shared status"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -50,6 +56,7 @@ const COMMAND_GROUPS = [
         summary: "Print current config, boundaries, and thread state",
         terminal: ["doctor"],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -57,6 +64,7 @@ const COMMAND_GROUPS = [
         summary: "Write an invisible trigger message into the internal system queue",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -64,6 +72,7 @@ const COMMAND_GROUPS = [
         summary: "Emit proactive check-in triggers at random intervals",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
     ],
@@ -77,6 +86,7 @@ const COMMAND_GROUPS = [
         summary: "Bind the current chat to a workspace directory",
         terminal: [],
         weixin: ["/bind"],
+        telegram: ["/bind"],
         status: "active",
       },
       {
@@ -84,6 +94,7 @@ const COMMAND_GROUPS = [
         summary: "Show the current workspace, thread, model, and context usage",
         terminal: [],
         weixin: ["/status"],
+        telegram: ["/status"],
         status: "active",
       },
       {
@@ -91,6 +102,7 @@ const COMMAND_GROUPS = [
         summary: "Switch to a fresh thread draft",
         terminal: [],
         weixin: ["/new"],
+        telegram: ["/new"],
         status: "active",
       },
       {
@@ -98,6 +110,7 @@ const COMMAND_GROUPS = [
         summary: "Make the current thread reread the latest instructions",
         terminal: [],
         weixin: ["/reread"],
+        telegram: ["/reread"],
         status: "active",
       },
       {
@@ -105,6 +118,7 @@ const COMMAND_GROUPS = [
         summary: "Compact the current thread context",
         terminal: [],
         weixin: ["/compact"],
+        telegram: ["/compact"],
         status: "active",
       },
       {
@@ -112,6 +126,7 @@ const COMMAND_GROUPS = [
         summary: "Switch to a specific thread",
         terminal: [],
         weixin: ["/switch <threadId>"],
+        telegram: ["/switch <threadId>"],
         status: "active",
       },
       {
@@ -119,6 +134,7 @@ const COMMAND_GROUPS = [
         summary: "Stop the current run inside the thread",
         terminal: [],
         weixin: ["/stop"],
+        telegram: ["/stop"],
         status: "active",
       },
       {
@@ -126,6 +142,7 @@ const COMMAND_GROUPS = [
         summary: "Reset the proactive check-in range in minutes",
         terminal: [],
         weixin: ["/checkin <min>-<max>"],
+        telegram: ["/checkin <min>-<max>"],
         status: "active",
       },
       {
@@ -133,6 +150,7 @@ const COMMAND_GROUPS = [
         summary: "Adjust the minimum short-chunk merge size for WeChat replies",
         terminal: [],
         weixin: ["/chunk <number>"],
+        telegram: [],
         status: "active",
       },
     ],
@@ -146,6 +164,7 @@ const COMMAND_GROUPS = [
         summary: "Allow the current approval request once",
         terminal: [],
         weixin: ["/yes"],
+        telegram: ["/yes"],
         status: "active",
       },
       {
@@ -153,6 +172,7 @@ const COMMAND_GROUPS = [
         summary: "Keep allowing matching command prefixes in the current workspace",
         terminal: [],
         weixin: ["/always"],
+        telegram: ["/always"],
         status: "active",
       },
       {
@@ -160,6 +180,37 @@ const COMMAND_GROUPS = [
         summary: "Deny the current approval request",
         terminal: [],
         weixin: ["/no"],
+        telegram: ["/no"],
+        status: "active",
+      },
+    ],
+  },
+  {
+    id: "identity",
+    label: "Identity & Cross-channel",
+    actions: [
+      {
+        action: "identity.link_issue",
+        summary: "Issue a one-time code so another channel can bind to this identity",
+        terminal: [],
+        weixin: ["/link"],
+        telegram: ["/link"],
+        status: "active",
+      },
+      {
+        action: "identity.link_redeem",
+        summary: "Redeem a code from another channel and bind this chat to that identity",
+        terminal: [],
+        weixin: ["/link <code>"],
+        telegram: ["/link <code>"],
+        status: "active",
+      },
+      {
+        action: "identity.unlink",
+        summary: "Remove this chat's identity binding on the current channel",
+        terminal: [],
+        weixin: ["/unlink"],
+        telegram: ["/unlink"],
         status: "active",
       },
     ],
@@ -173,6 +224,7 @@ const COMMAND_GROUPS = [
         summary: "Inspect the current model",
         terminal: [],
         weixin: ["/model"],
+        telegram: ["/model"],
         status: "active",
       },
       {
@@ -180,6 +232,7 @@ const COMMAND_GROUPS = [
         summary: "Switch to a specific model",
         terminal: [],
         weixin: ["/model <id>"],
+        telegram: ["/model <id>"],
         status: "active",
       },
       {
@@ -187,6 +240,7 @@ const COMMAND_GROUPS = [
         summary: "Send a local file back to the current chat as an attachment",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -194,6 +248,7 @@ const COMMAND_GROUPS = [
         summary: "Write the current context into timeline",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -201,6 +256,7 @@ const COMMAND_GROUPS = [
         summary: "Build the static timeline site",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -208,6 +264,7 @@ const COMMAND_GROUPS = [
         summary: "Start the static timeline site server",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -215,6 +272,7 @@ const COMMAND_GROUPS = [
         summary: "Start the hot-reload timeline dev server",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -222,6 +280,7 @@ const COMMAND_GROUPS = [
         summary: "Capture a timeline screenshot",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -229,6 +288,7 @@ const COMMAND_GROUPS = [
         summary: "Create a reminder and hand it to the scheduler",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -236,6 +296,7 @@ const COMMAND_GROUPS = [
         summary: "Append a diary entry",
         terminal: [],
         weixin: [],
+        telegram: [],
         status: "active",
       },
       {
@@ -243,6 +304,7 @@ const COMMAND_GROUPS = [
         summary: "Star the project on GitHub",
         terminal: [],
         weixin: ["/star"],
+        telegram: ["/star"],
         status: "active",
       },
       {
@@ -250,6 +312,7 @@ const COMMAND_GROUPS = [
         summary: "Show currently available commands for this channel",
         terminal: ["help"],
         weixin: ["/help"],
+        telegram: ["/help"],
         status: "active",
       },
     ],
@@ -268,13 +331,14 @@ function buildTerminalHelpText() {
     "Usage: cyberboss <command>",
     "",
     "Current terminal commands:",
-    "  cyberboss start        start the WeChat bridge and runtime loop",
-    "  cyberboss login        start WeChat QR login",
-    "  cyberboss accounts     list locally saved accounts",
-    "  cyberboss doctor       print current config and thread state",
-    "  npm run shared:start   start the shared app-server and WeChat bridge",
-    "  npm run shared:open    attach to the shared thread currently bound in WeChat",
-    "  npm run shared:status  show shared bridge status",
+    "  cyberboss start                   start all configured channels and the runtime loop",
+    "  cyberboss login                   start WeChat QR login (default channel)",
+    "  cyberboss login --channel telegram   register a Telegram bot token",
+    "  cyberboss accounts                list locally saved accounts",
+    "  cyberboss doctor                  print current config and thread state",
+    "  npm run shared:start              start the shared app-server and WeChat bridge",
+    "  npm run shared:open               attach to the shared thread currently bound in WeChat",
+    "  npm run shared:status             show shared bridge status",
   ];
 
   for (const group of COMMAND_GROUPS) {
@@ -294,19 +358,57 @@ function buildTerminalHelpText() {
 }
 
 function buildWeixinHelpText() {
+  return buildChannelHelpText("weixin");
+}
+
+function buildTelegramHelpText() {
+  return buildChannelHelpText("telegram");
+}
+
+function buildChannelHelpText(channelId) {
+  const channelKey = String(channelId || "").trim().toLowerCase();
+  if (!channelKey) {
+    return "💡 Available commands:";
+  }
   const lines = ["💡 Available commands:"];
   for (const group of COMMAND_GROUPS) {
-    const activeActions = group.actions.filter((action) => action.status === "active" && action.weixin.length);
+    const activeActions = group.actions.filter((action) => {
+      const list = Array.isArray(action[channelKey]) ? action[channelKey] : [];
+      return action.status === "active" && list.length;
+    });
     if (!activeActions.length) {
       continue;
     }
     lines.push("");
     lines.push(`${groupEmoji(group.id)} 【${group.label}】`);
     for (const action of activeActions) {
-      lines.push(`  ${actionEmoji(action)} ${action.weixin.join(", ")} — ${action.summary}`);
+      const examples = (Array.isArray(action[channelKey]) ? action[channelKey] : []).join(", ");
+      lines.push(`  ${actionEmoji(action)} ${examples} — ${action.summary}`);
     }
   }
   return lines.join("\n");
+}
+
+function isCommandSupportedOnChannel(commandName, channelId) {
+  const normalizedCommand = String(commandName || "").trim().toLowerCase();
+  const channelKey = String(channelId || "").trim().toLowerCase();
+  if (!normalizedCommand || !channelKey) {
+    return false;
+  }
+  for (const group of COMMAND_GROUPS) {
+    for (const action of group.actions) {
+      if (action.status !== "active") continue;
+      const list = Array.isArray(action[channelKey]) ? action[channelKey] : [];
+      for (const entry of list) {
+        const head = String(entry || "").trim().split(/\s+/)[0];
+        if (!head) continue;
+        if (head.replace(/^\//, "").toLowerCase() === normalizedCommand) {
+          return true;
+        }
+      }
+    }
+  }
+  return false;
 }
 
 function groupEmoji(groupId) {
@@ -314,6 +416,7 @@ function groupEmoji(groupId) {
     case "lifecycle": return "🔄";
     case "workspace": return "📁";
     case "approval": return "🔐";
+    case "identity": return "🔗";
     case "capabilities": return "⚡️";
     default: return "•";
   }
@@ -332,6 +435,9 @@ function actionEmoji(action) {
     case "approval.accept_once": return "✅";
     case "approval.accept_workspace": return "💡";
     case "approval.reject_once": return "❌";
+    case "identity.link_issue":
+    case "identity.link_redeem": return "🔗";
+    case "identity.unlink": return "✂️";
     case "model.inspect":
     case "model.select": return "🤖";
     case "app.help": return "❓";
@@ -343,6 +449,9 @@ function actionEmoji(action) {
 module.exports = {
   buildTerminalHelpText,
   buildWeixinHelpText,
+  buildTelegramHelpText,
+  buildChannelHelpText,
+  isCommandSupportedOnChannel,
   listCommandGroups,
 };
 

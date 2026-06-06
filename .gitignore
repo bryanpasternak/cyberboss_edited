@@ -8,3 +8,4 @@ npm-debug.log*
 third_party/
 firmware/
 diary/
+temp/

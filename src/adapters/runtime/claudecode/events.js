@@ -31,6 +31,16 @@ function mapClaudeCodeMessageToRuntimeEvent(message, raw) {
           text: message.text,
         },
       };
+    case "thinking":
+      return {
+        type: "runtime.thinking.delta",
+        payload: {
+          threadId: message.sessionId,
+          turnId: message.turnId,
+          itemId: buildThinkingItemId(message),
+          text: typeof message.text === "string" ? message.text : "",
+        },
+      };
     case "turn.completed":
       return {
         type: "runtime.turn.completed",
@@ -152,6 +162,12 @@ function buildReplyItemId(message) {
   }
   const turnId = typeof message?.turnId === "string" ? message.turnId.trim() : "";
   return `text-${turnId || "unknown"}-${textIndex}`;
+}
+
+function buildThinkingItemId(message) {
+  const turnId = typeof message?.turnId === "string" ? message.turnId.trim() : "";
+  const sessionId = typeof message?.sessionId === "string" ? message.sessionId.trim() : "";
+  return `thinking-${turnId || sessionId || "unknown"}`;
 }
 
 module.exports = { mapClaudeCodeMessageToRuntimeEvent };
