@@ -135,6 +135,7 @@ class CyberbossApp {
     });
     this.pendingOperationByRunKey = new Map();
     this.pendingDesireActionByRunKey = new Map();
+    this._aiReplyTextAccumulator = new Map();
     this.runtimeEventChain = Promise.resolve();
     this.runtimeAdapter.onEvent((event) => {
       this.threadStateStore.applyRuntimeEvent(event);
@@ -530,6 +531,11 @@ class CyberbossApp {
     if (allowCommands && command) {
       await this.dispatchChannelCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
       return;
+    }
+
+    // 关键词触发：扫描用户消息中的亲密/情绪关键词，自动提升对应驱动
+    if (this.projectServices?.desire && normalized.provider !== "system") {
+      this.projectServices.desire.scanTextTriggers(normalized.text || "");
     }
 
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
@@ -1688,7 +1694,7 @@ class CyberbossApp {
     if (subcommand === "satisfy") {
       const action = normalizeCommandArgument(restTokens[0]);
       if (!isKnownDesireAction(action)) {
-        await reply("Usage: /desire satisfy <co_read|github|web_search|web_browse|tease|vent|none>");
+        await reply("Usage: /desire satisfy <web_browse|flirt|reflect|follow_up|seduce|vent|none>");
         return;
       }
       service.satisfyAction(action);
@@ -1936,7 +1942,25 @@ class CyberbossApp {
     if (!event) {
       return;
     }
+
+    // 积累 AI 回复文本，用于关键词触发
+    if (event.type === "runtime.reply.completed" && event.payload?.text && event.payload?.threadId) {
+      const tid = event.payload.threadId;
+      const existing = this._aiReplyTextAccumulator.get(tid) || "";
+      this._aiReplyTextAccumulator.set(tid, existing + "\n" + event.payload.text);
+    }
+
     if (event.type === "runtime.turn.completed" || event.type === "runtime.turn.failed") {
+      // 扫描 AI 回复中的关键词
+      if (this.projectServices?.desire && event.type === "runtime.turn.completed") {
+        const tid = event.payload?.threadId || "";
+        const aiText = this._aiReplyTextAccumulator.get(tid) || event.payload?.text || "";
+        if (aiText) {
+          this.projectServices.desire.scanTextTriggers(aiText);
+        }
+        this._aiReplyTextAccumulator.delete(tid);
+      }
+
       const completedRunKey = buildRunKey(event.payload.threadId, event.payload.turnId);
       const pendingOperations = this.pendingOperationByRunKey;
       const pendingOperation = pendingOperations?.get?.(completedRunKey) || null;
@@ -2302,7 +2326,7 @@ function buildDesireUsageText() {
     "/desire off",
     "/desire tick",
     "/desire feed <drive> [flit|fixation] <text>",
-    "/desire satisfy <co_read|github|web_search|web_browse|tease|vent|none>",
+    "/desire satisfy <web_browse|flirt|reflect|follow_up|seduce|vent|none>",
   ].join("\n");
 }
 
@@ -2317,7 +2341,7 @@ function extractDesireActionFromSystemText(text) {
 }
 
 function isKnownDesireAction(action) {
-  return ["co_read", "github", "web_search", "web_browse", "tease", "vent", "none"].includes(normalizeCommandArgument(action));
+  return ["web_browse", "flirt", "reflect", "follow_up", "seduce", "vent", "none"].includes(normalizeCommandArgument(action));
 }
 
 function formatDriveBar(value) {

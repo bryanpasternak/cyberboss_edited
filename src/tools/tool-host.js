@@ -209,14 +209,14 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_desire_satisfy",
-    description: "Apply desire satisfaction decay for a completed action such as co_read, web_search, web_browse, tease, vent, or none.",
+    description: "Apply desire satisfaction decay for a completed action such as web_browse, flirt, reflect, follow_up, seduce, vent, or none.",
     shortHint: "Apply desire satisfaction decay.",
     topics: ["desire"],
     inputSchema: {
       type: "object",
       required: ["action"],
       properties: {
-        action: { type: "string", description: "Action: co_read, github, web_search, web_browse, tease, vent, or none." },
+        action: { type: "string", description: "Action: web_browse, flirt, reflect, follow_up, seduce, vent, or none." },
       },
       additionalProperties: false,
     },

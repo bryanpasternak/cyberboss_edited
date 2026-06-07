@@ -11,6 +11,7 @@ const {
   normalizeState,
 } = require("./desire/desire-engine");
 const { DesireStore } = require("./desire/desire-store");
+const { scanTriggers } = require("./desire/desire-trigger");
 
 class DesireService {
   constructor({ store, drivenEnabled = false, thoughtMax = 80 } = {}) {
@@ -47,7 +48,7 @@ class DesireService {
       drive: state.drive,
       scores,
       intent,
-      availableActions: ["co_read", "github", "web_search", "web_browse", "tease", "vent", "none"],
+      availableActions: ["web_browse", "flirt", "reflect", "follow_up", "seduce", "vent", "none"],
       thoughtCount: state.thoughts.length,
       thoughts: state.thoughts,
       drivenBehaviorEnabled: state.drivenBehaviorEnabled,
@@ -88,6 +89,39 @@ class DesireService {
       ...state,
       drivenBehaviorEnabled: Boolean(enabled),
     }));
+  }
+
+  /**
+   * 扫描用户消息中的关键词，自动提升对应驱动值。
+   * 每组分词有冷却时间防止反复触发。
+   * @param {string} text - 用户消息文本
+   * @returns {{ triggered: string[], boosts: Object<string,number> }}
+   */
+  scanTextTriggers(text) {
+    if (!this._triggerLastHits) {
+      this._triggerLastHits = {};
+    }
+    const result = scanTriggers(text, Date.now(), this._triggerLastHits);
+    this._triggerLastHits = result.nextLastHits;
+
+    const boostEntries = Object.entries(result.boosts);
+    if (!boostEntries.length) {
+      return { triggered: [], boosts: {} };
+    }
+
+    this.store.update((state) => {
+      const drive = { ...state.drive };
+      for (const [key, amount] of boostEntries) {
+        const current = Number(drive[key]) || 0;
+        drive[key] = Math.round(Math.min(1, current + amount) * 10000) / 10000;
+      }
+      return { ...state, drive };
+    });
+
+    if (result.triggered.length) {
+      console.log(`[desire] trigger hit: keywords=${result.triggered.join(",")} boosts=${JSON.stringify(result.boosts)}`);
+    }
+    return { triggered: result.triggered, boosts: result.boosts };
   }
 
   buildDesireSystemMessage() {

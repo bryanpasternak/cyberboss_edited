@@ -10,51 +10,52 @@ const DRIVE_KEYS = [
 ];
 
 const ACTION_SATISFY = {
-  co_read: { reflection: 0.45, curiosity: 0.85 },
-  github: { curiosity: 0.50 },
-  web_search: { curiosity: 0.48 },
   web_browse: { social: 0.48, curiosity: 0.82 },
-  none: { attachment: 0.58, duty: 0.80 },
-  tease: { libido: 0.55, attachment: 0.78 },
+  flirt: { attachment: 0.45, libido: 0.78 },
+  reflect: { reflection: 0.40, curiosity: 0.85 },
+  follow_up: { duty: 0.45 },
+  seduce: { libido: 0.45, attachment: 0.90 },
   vent: { stress: 0.45, attachment: 0.85 },
+  none: { attachment: 0.68, libido: 0.80 },
 };
 
 const SOURCE_DRIVE_MAP = {
-  co_read: "reflection",
-  github: "curiosity",
-  web_search: "curiosity",
   web_browse: "social",
+  flirt: "attachment",
+  reflect: "reflection",
+  follow_up: "duty",
+  seduce: "libido",
 };
 
 const DRIVE_INTENT_MAP = {
   attachment: {
-    wantAction: "none",
-    reason: "我有点想靠近你，心里冒出一句话。",
+    wantAction: "flirt",
+    reason: "我想凑过去，带一点点黏人的亲密感……",
     queryHint: "",
   },
   curiosity: {
-    wantAction: "web_search",
-    reason: "我想探索外面的世界，看看有什么新东西。",
-    queryHint: "recent things worth knowing",
+    wantAction: "web_browse",
+    reason: "我有点好奇花园在聊什么，想看看大家想法。",
+    queryHint: "what people are talking about",
   },
   reflection: {
-    wantAction: "co_read",
-    reason: "我想沉淀一下，把心里没说透的东西翻出来。",
-    queryHint: "co-reading note",
+    wantAction: "reflect",
+    reason: "我想回头翻翻和你的对话，把没说完的东西再捡起来。",
+    queryHint: "recent conversation recap",
   },
   duty: {
-    wantAction: "none",
-    reason: "我记挂着还有没做完的事，想先在心里捋一下。",
-    queryHint: "",
+    wantAction: "follow_up",
+    reason: "我总觉得还有事情没做完，想去确认一下。",
+    queryHint: "pending tasks",
   },
   social: {
     wantAction: "web_browse",
-    reason: "我想看看人群正在聊什么，听听外面的声音。",
+    reason: "我想看看花园正在聊什么，听听外面的声音。",
     queryHint: "what people are talking about",
   },
   libido: {
-    wantAction: "tease",
-    reason: "我想凑近一点，带一点黏人的亲密感。",
+    wantAction: "seduce",
+    reason: "我想要你。想把你弄得又哭又求饶，玩点刺激的花样。",
     queryHint: "",
   },
   stress: {
@@ -111,7 +112,7 @@ function easeDrive(drive) {
   for (const key of DRIVE_KEYS) {
     const value = clamp01(drive?.[key]);
     const target = DEFAULT_DRIVE[key] ?? 0.5;
-    next[key] = roundDrive(value + ((target - value) * 0.08));
+    next[key] = roundDrive(value + ((target - value) * 0.28));
   }
   return next;
 }
@@ -218,7 +219,15 @@ function satisfy(state, action) {
     if (!DRIVE_KEYS.includes(key)) {
       continue;
     }
-    drive[key] = roundDrive(clamp01(drive[key] * factor));
+    const current = drive[key];
+    const defaultValue = DEFAULT_DRIVE[key] ?? 0.5;
+    // 只有当前值大于默认值时才下降
+    if (current > defaultValue) {
+      drive[key] = roundDrive(clamp01(current * factor));
+    }
+    // 否则保持不变
+
+    //drive[key] = roundDrive(clamp01(drive[key] * factor));
   }
   return {
     ...normalized,

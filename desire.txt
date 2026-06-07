@@ -167,3 +167,76 @@ description: "...such as web_browse, flirt, review, check, tease, vent, or none.
 关于「以后加新功能」
 
 现在 action 列表硬编码在 5 个不同地方。如果想以后好加，我可以顺手帮你集中到一个常量文件，比如 src/services/desire/desire-constants.js，所有文件 import 它，以后加 action 只改一处。
+
+
+================
+
+
+
+
+新增了什么
+
+新建 src/services/desire/desire-trigger.js
+
+修改 src/services/desire-service.js — 加 scanTextTriggers(text) 方法
+
+修改 src/core/app.js — 在 handlePreparedMessage 里、命令检查后、派发给 AI 前调用
+
+工作流程
+
+用户发消息 "好想你啊亲爱的"
+         ↓
+handlePreparedMessage
+  → 解析命令（不是命令，继续）
+  → scanTextTriggers("好想你啊亲爱的")
+    → 匹配 "亲" → libido +0.08
+    → 匹配 "想你" → libido +0.08
+    → store.update({drive: {...libido: 0.25→0.41}})
+    → 冷却计时开始（30s 内不再触发"亲"）
+  → prepareIncomingMessageForRuntime
+    → 消息发给 AI 时 libido 已经涨上去了
+
+现有的触发词表
+
+┌──────────────────┬──────────────────┬──────┐
+│       分词       │       提升       │ 冷却 │
+
+工作流程
+
+用户发消息 "好想你啊亲爱的"
+         ↓
+handlePreparedMessage
+  → 解析命令（不是命令，继续）
+  → scanTextTriggers("好想你啊亲爱的")
+    → 匹配 "亲" → libido +0.08
+    → 匹配 "想你" → libido +0.08
+    → store.update({drive: {...libido: 0.25→0.41}})
+    → 冷却计时开始（30s 内不再触发"亲"）
+  → prepareIncomingMessageForRuntime
+    → 消息发给 AI 时 libido 已经涨上去了
+
+
+
+
+怎么加新触发词
+
+直接改 desire-trigger.js 里的 TRIGGER_RULES 数组就行，不需要动其他文件：
+
+{ keywords: ["亲亲", "mua"], drive: "libido", boost: 0.10, cooldownMs: 30_000 },
+
+
+
+
+关键词触发现在两端都支持了：
+
+用户发 "好想你啊亲爱的"
+  → scanTextTriggers → libido +0.16
+  → 派发给 AI 时 libido 已涨
+
+AI 回复 "我也想你呀宝贝~"
+  → runtime.reply.completed 累积文本
+  → runtime.turn.completed 时扫描
+  → scanTextTriggers → libido +0.14（"想你"+"亲"来自"宝贝"）
+  → 下一轮 checkin 时 libido 更高了
+
+要加/改触发词，直接编辑 desire-trigger.js 里的 TRIGGER_RULES 数组就行。
