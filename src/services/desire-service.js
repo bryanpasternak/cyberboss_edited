@@ -48,7 +48,7 @@ class DesireService {
       drive: state.drive,
       scores,
       intent,
-      availableActions: ["web_browse", "flirt", "reflect", "follow_up", "seduce", "vent", "none"],
+      availableActions: ["web_browse", "reach_out", "reflect", "follow_up", "seduce", "vent", "none"],
       thoughtCount: state.thoughts.length,
       thoughts: state.thoughts,
       drivenBehaviorEnabled: state.drivenBehaviorEnabled,

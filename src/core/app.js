@@ -51,6 +51,7 @@ const {
 } = require("../adapters/runtime/shared/approval-command");
 const { runSystemCheckinPoller } = require("../app/system-checkin-poller");
 const { createProjectTooling } = require("../tools/create-project-tooling");
+const { createChatMemoryRuntime } = require("../services/chat-memory");
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
 const MIN_LONG_POLL_TIMEOUT_MS = 2_000;
 const SESSION_EXPIRED_ERRCODE = -14;
@@ -120,6 +121,9 @@ class CyberbossApp {
     this.checkinConfigStore = new CheckinConfigStore({ filePath: config.checkinConfigFile });
     this.timelineScreenshotQueue = new TimelineScreenshotQueueStore({ filePath: config.timelineScreenshotQueueFile });
     this.reminderQueue = new ReminderQueueStore({ filePath: config.reminderQueueFile });
+    this.chatMemory = createChatMemoryRuntime({ config, systemMessageQueue: this.systemMessageQueue });
+    this.projectServices.chatMemory = this.chatMemory.memory;
+    this.projectServices.promiseMemory = this.chatMemory.promises;
     this.turnGateStore = new TurnGateStore();
     this.pendingInboundByScope = new Map();
     this.pendingImageInboundByScope = new Map();
@@ -136,6 +140,7 @@ class CyberbossApp {
     this.pendingOperationByRunKey = new Map();
     this.pendingDesireActionByRunKey = new Map();
     this._aiReplyTextAccumulator = new Map();
+    this._chatMemoryReplyAccumulator = new Map();
     this.runtimeEventChain = Promise.resolve();
     this.runtimeAdapter.onEvent((event) => {
       this.threadStateStore.applyRuntimeEvent(event);
@@ -212,6 +217,7 @@ class CyberbossApp {
     });
     const runtimeState = await this.runtimeAdapter.initialize();
     await this.restoreBoundThreadSubscriptions();
+    this.chatMemory.scheduler?.start?.();
 
     console.log("[cyberboss] bootstrap ok");
     for (const [channelId, channel] of this.channels.entries()) {
@@ -237,6 +243,7 @@ class CyberbossApp {
 
     const shutdown = createShutdownController(async () => {
       this.clearPendingImageInboundTimers();
+      this.chatMemory.scheduler?.stop?.();
       await this.closeLocationServer();
       await this.runtimeAdapter.close();
     });
@@ -252,6 +259,7 @@ class CyberbossApp {
     } finally {
       shutdown.dispose();
       this.clearPendingImageInboundTimers();
+      this.chatMemory.scheduler?.stop?.();
       await this.closeLocationServer();
       await this.runtimeAdapter.close();
     }
@@ -265,6 +273,7 @@ class CyberbossApp {
         if (isWeixinChannel && weixinAccount) {
           await Promise.all([
             this.flushDueReminders(weixinAccount),
+            this.flushDuePromises(weixinAccount),
             this.flushPendingInboundMessages(),
             this.flushPendingSystemMessages(),
             this.flushPendingTimelineScreenshots(weixinAccount),
@@ -289,6 +298,7 @@ class CyberbossApp {
         if (isWeixinChannel && weixinAccount) {
           await Promise.all([
             this.flushDueReminders(weixinAccount),
+            this.flushDuePromises(weixinAccount),
             this.flushPendingInboundMessages(),
             this.flushPendingSystemMessages(),
             this.flushPendingTimelineScreenshots(weixinAccount),
@@ -538,6 +548,15 @@ class CyberbossApp {
       this.projectServices.desire.scanTextTriggers(normalized.text || "");
     }
 
+    // 记忆关键词触发：检测用户是否暗示需要记忆操作
+    if (normalized.provider !== "system") {
+      const MEMORY_TRIGGERS = ['记住', '以后', '别忘了', '记下来', '保存', '存档', '还记得'];
+      const matchedTrigger = MEMORY_TRIGGERS.find(kw => (normalized.text || '').includes(kw));
+      if (matchedTrigger) {
+        normalized._memoryHint = matchedTrigger;
+      }
+    }
+
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
     const prepared = await this.prepareIncomingMessageForRuntime(normalized, workspaceRoot, { channelId: sourceChannelId, channel: sourceChannel });
     if (!prepared) {
@@ -546,8 +565,17 @@ class CyberbossApp {
     if (!prepared.channelId) {
       prepared.channelId = sourceChannelId;
     }
+    if (!prepared.bindingKey) {
+      prepared.bindingKey = bindingKey;
+    }
+    if (!prepared.workspaceRoot) {
+      prepared.workspaceRoot = workspaceRoot;
+    }
 
     if (shouldBatchImageOnlyInbound(prepared)) {
+      if (typeof this.capturePreparedUserMessage === "function") {
+        await this.capturePreparedUserMessage({ prepared, bindingKey, workspaceRoot, channelId: sourceChannelId });
+      }
       this.enqueuePendingImageInbound({ bindingKey, workspaceRoot, prepared });
       return;
     }
@@ -567,6 +595,9 @@ class CyberbossApp {
       await this.flushPendingImageInboundBatch({ bindingKey, workspaceRoot });
     }
 
+    if (typeof this.capturePreparedUserMessage === "function") {
+      await this.capturePreparedUserMessage({ prepared, bindingKey, workspaceRoot, channelId: sourceChannelId });
+    }
     await this.routePreparedInbound({ bindingKey, workspaceRoot, prepared });
   }
 
@@ -610,7 +641,17 @@ class CyberbossApp {
           workspaceId: prepared.workspaceId,
           accountId: prepared.accountId,
           senderId: prepared.senderId,
+          _memoryHint: prepared._memoryHint || '',
         },
+      });
+      await this.chatMemory?.capture?.appendTurnLinked?.({
+        sourceEventId: prepared._chatMemorySourceEventId || "",
+        threadId: turn.threadId,
+        turnId: turn.turnId,
+        bindingKey,
+        workspaceRoot,
+      }).catch((error) => {
+        console.warn(`[chat-memory] turn link failed: ${error.message}`);
       });
       const desireAction = prepared?.provider === "system" ? extractDesireActionFromSystemText(runtimeTurn.text) : "";
       if (desireAction) {
@@ -647,6 +688,14 @@ class CyberbossApp {
       this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
       const messageText = error instanceof Error ? error.message : String(error || "unknown error");
       console.error(`[cyberboss] dispatchPreparedTurn failed workspace=${workspaceRoot} binding=${bindingKey} error=${messageText}`);
+      await this.chatMemory?.capture?.appendDispatchFailed?.({
+        sourceEventId: prepared._chatMemorySourceEventId || "",
+        text: messageText,
+        bindingKey,
+        workspaceRoot,
+      }).catch((captureError) => {
+        console.warn(`[chat-memory] dispatch failure capture failed: ${captureError.message}`);
+      });
       await outboundChannel.sendText({
         userId: prepared.senderId,
         text: `❌ Request failed\n${messageText}`,
@@ -658,8 +707,14 @@ class CyberbossApp {
 
   async buildRuntimeTurn({ prepared, model = "" }) {
     if (prepared?.provider === "system") {
+      const promiseContext = typeof this.buildPromiseCheckText === "function"
+        ? await this.buildPromiseCheckText({
+            prepared,
+            text: String(prepared.text || "").trim(),
+          })
+        : "";
       return {
-        text: String(prepared.text || "").trim(),
+        text: [promiseContext, String(prepared.text || "").trim()].filter(Boolean).join("\n\n").trim(),
         attachments: [],
       };
     }
@@ -669,12 +724,19 @@ class CyberbossApp {
       runtimeAdapter: this.runtimeAdapter,
       model,
     });
-    return {
-      text: assembleRuntimeTurnText({
+    const baseText = assembleRuntimeTurnText({
         prepared,
         config: this.config,
         visionContext,
-      }),
+      });
+    const memoryContext = typeof this.buildMemoryInjectionText === "function"
+      ? await this.buildMemoryInjectionText({
+          prepared,
+          text: baseText,
+        })
+      : "";
+    return {
+      text: [baseText, memoryContext].filter(Boolean).join("\n\n").trim(),
       attachments: Array.isArray(visionContext.runtimeAttachments) ? visionContext.runtimeAttachments : [],
       visionContext,
     };
@@ -781,8 +843,8 @@ class CyberbossApp {
       this.pendingImageInboundByScope.set(scopeKey, {
         bindingKey: draft.bindingKey,
         workspaceRoot: draft.workspaceRoot,
-        messages: remainingMessages,
-        timer: null,
+      messages: remainingMessages,
+      timer: null,
       });
     }
 
@@ -792,6 +854,14 @@ class CyberbossApp {
       messages: batchMessages,
       trailingPrepared,
     });
+    if (typeof this.capturePreparedUserMessage === "function") {
+      await this.capturePreparedUserMessage({
+        prepared,
+        bindingKey: draft.bindingKey,
+        workspaceRoot: draft.workspaceRoot,
+        channelId: prepared.channelId || prepared.provider,
+      });
+    }
     await this.routePreparedInbound({
       bindingKey: draft.bindingKey,
       workspaceRoot: draft.workspaceRoot,
@@ -831,6 +901,7 @@ class CyberbossApp {
       attachments: Array.isArray(prepared.attachments) ? prepared.attachments : [],
       attachmentFailures: Array.isArray(prepared.attachmentFailures) ? prepared.attachmentFailures : [],
       receivedAt: prepared.receivedAt,
+      _memoryHint: prepared._memoryHint || '',
     });
     this.pendingInboundByScope.set(scopeKey, current);
     const inboundChannel = this.resolveChannelById(prepared?.channelId)
@@ -891,6 +962,9 @@ class CyberbossApp {
           attachments: pendingDispatch.prepared.attachments,
           attachmentFailures: pendingDispatch.prepared.attachmentFailures,
           receivedAt: pendingDispatch.prepared.receivedAt,
+          bindingKey: pendingDispatch.prepared.bindingKey,
+          workspaceRoot: pendingDispatch.prepared.workspaceRoot,
+          _chatMemorySourceEventId: pendingDispatch.prepared._chatMemorySourceEventId || "",
         },
       });
       if (!dispatched) {
@@ -1125,6 +1199,41 @@ class CyberbossApp {
     }
   }
 
+  async flushDuePromises(account) {
+    if (!this.chatMemory?.promises || this.config.promiseActiveTriggerEnabled === false) {
+      return;
+    }
+    const duePromises = this.chatMemory.promises.retrieveDueForTurn({
+      now: new Date(),
+      accountId: account.accountId,
+      limit: 10,
+    });
+    const queuedIds = [];
+    for (const promise of duePromises) {
+      try {
+        this.systemMessageQueue.enqueue({
+          id: `promise:${promise.id}`,
+          accountId: promise.accountId || account.accountId,
+          senderId: promise.senderId || resolvePreferredSenderId({
+            config: this.config,
+            accountId: account.accountId,
+            sessionStore: this.runtimeAdapter.getSessionStore(),
+          }),
+          workspaceRoot: promise.workspaceRoot || this.resolveReminderWorkspaceRoot({
+            accountId: account.accountId,
+            senderId: promise.senderId || "",
+          }),
+          text: buildPromiseSystemTrigger(promise),
+          createdAt: new Date().toISOString(),
+        });
+        queuedIds.push(promise.id);
+      } catch (error) {
+        console.warn(`[chat-memory] promise queue failed: ${error.message}`);
+      }
+    }
+    this.chatMemory.promises.markInjected(queuedIds, { at: new Date() });
+  }
+
   resolveReminderWorkspaceRoot(reminder) {
     const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
       workspaceId: this.config.workspaceId,
@@ -1224,8 +1333,8 @@ class CyberbossApp {
         case "help":
           await this.handleHelpCommand(normalized, sourceChannelId);
           return;
-        case "memory":
-          await this.handleMemoryCommand(normalized, command);
+        case "recall":
+          await this.handleRecallCommand(normalized, command);
           return;
         case "link":
           await this.handleLinkCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
@@ -1314,23 +1423,36 @@ class CyberbossApp {
     });
   }
 
-  async handleMemoryCommand(normalized, command) {
-    const { handleMemoryCommand } = require("./memory-commands");
-    const args = typeof command?.args === "string" ? command.args.trim() : "";
-    const fullText = args ? `/memory ${args}` : "/memory";
-    let reply;
-    try {
-      reply = await handleMemoryCommand({ text: fullText });
-    } catch (err) {
-      console.error("[Memory Command] 执行失败:", err.message);
-      reply = `❌ 记忆命令执行失败: ${err.message}`;
-    }
-    if (!reply) {
-      reply = "未知 memory 命令。输入 /memory help 查看帮助。";
+  async handleRecallCommand(normalized, command) {
+    const args = normalizeCommandArgument(command.args);
+    const [rawSubcommand] = args.split(/\s+/).filter(Boolean);
+    const subcommand = normalizeCommandName(rawSubcommand || "status");
+    const memoryService = this.chatMemory?.memory || null;
+    let settings = this.chatMemory?.memory?.getSettings?.() || {
+      injectEnabled: false,
+      injectLimit: 0,
+    };
+    if (["on", "enable", "enabled"].includes(subcommand)) {
+      settings = memoryService?.setInjectEnabled?.(true) || settings;
+    } else if (["off", "disable", "disabled"].includes(subcommand)) {
+      settings = memoryService?.setInjectEnabled?.(false) || settings;
+    } else if (/^\d+$/.test(subcommand)) {
+      settings = memoryService?.setInjectLimit?.(Number.parseInt(subcommand, 10)) || settings;
+    } else if (!["status", "state", "help"].includes(subcommand)) {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: "Usage: /recall | /recall on | /recall off | /recall <number>",
+        contextToken: normalized.contextToken,
+      });
+      return;
     }
     await this.currentChannel.sendText({
       userId: normalized.senderId,
-      text: reply,
+      text: [
+        `🧠 auto recall: ${settings.injectEnabled ? "on" : "off"}`,
+        `🧠 recall count: ${settings.injectLimit}`,
+        this.config.chatMemoryEnabled ? "" : "⚠️ CYBERBOSS_CHAT_MEMORY_ENABLED is off, so capture/retrieval are disabled.",
+      ].filter(Boolean).join("\n"),
       contextToken: normalized.contextToken,
     });
   }
@@ -1436,10 +1558,18 @@ class CyberbossApp {
     const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
     const sessionStore = this.runtimeAdapter.getSessionStore();
     const previousThreadId = sessionStore.getThreadIdForWorkspace(bindingKey, workspaceRoot);
+    const nextOpeningContext = await this.buildNewThreadOpeningContext({
+      previousThreadId,
+      bindingKey,
+      workspaceRoot,
+    });
     if (typeof this.runtimeAdapter.startFreshThreadDraft === "function") {
       await this.runtimeAdapter.startFreshThreadDraft({ bindingKey, workspaceRoot });
     }
     sessionStore.clearThreadIdForWorkspace(bindingKey, workspaceRoot);
+    if (nextOpeningContext && typeof sessionStore.setNextOpeningContextForWorkspace === "function") {
+      sessionStore.setNextOpeningContextForWorkspace(bindingKey, workspaceRoot, nextOpeningContext);
+    }
     this.clearPendingInboundForScope(bindingKey, workspaceRoot);
     this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
     if (previousThreadId) {
@@ -1456,6 +1586,40 @@ class CyberbossApp {
       text: `✅ Switched to a fresh thread draft\nworkspace: ${workspaceRoot}`,
       contextToken: normalized.contextToken,
     });
+  }
+
+  async buildNewThreadOpeningContext({ previousThreadId = "", bindingKey = "", workspaceRoot = "" } = {}) {
+    const blocks = [];
+    try {
+      const recap = await this.chatMemory?.memory?.buildThreadRecap?.({
+        threadId: previousThreadId,
+        bindingKey,
+        workspaceRoot,
+        headTurns: 15,
+        tailTurns: 15,
+        omitTailTurns: 2,
+      });
+      if (recap) {
+        blocks.push(recap);
+      }
+    } catch (error) {
+      console.warn(`[chat-memory] previous thread recap failed: ${error.message}`);
+    }
+    try {
+      const recent = await this.chatMemory?.memory?.retrieveRecent?.({
+        limit: 4,
+        filters: { bindingKey, workspaceRoot },
+      });
+      const context = this.chatMemory?.memory?.formatForInjection?.(recent, {
+        title: "这些是你和苏苏最近发生的事，你还记得很清楚：",
+      });
+      if (context) {
+        blocks.push(context);
+      }
+    } catch (error) {
+      console.warn(`[chat-memory] recent memory for new thread failed: ${error.message}`);
+    }
+    return blocks.join("\n\n").trim();
   }
 
   async handleRereadCommand(normalized) {
@@ -1694,7 +1858,7 @@ class CyberbossApp {
     if (subcommand === "satisfy") {
       const action = normalizeCommandArgument(restTokens[0]);
       if (!isKnownDesireAction(action)) {
-        await reply("Usage: /desire satisfy <web_browse|flirt|reflect|follow_up|seduce|vent|none>");
+        await reply("Usage: /desire satisfy <web_browse|reach_out|reflect|follow_up|seduce|vent|none>");
         return;
       }
       service.satisfyAction(action);
@@ -1931,6 +2095,152 @@ class CyberbossApp {
     return sessionStore.getActiveWorkspaceRoot(bindingKey) || this.config.workspaceRoot;
   }
 
+  async capturePreparedUserMessage({ prepared, bindingKey, workspaceRoot, channelId } = {}) {
+    try {
+      const sourceEventId = await this.chatMemory?.capture?.appendUserReceived?.({
+        prepared,
+        bindingKey,
+        workspaceRoot,
+        channelId,
+      });
+      if (prepared && sourceEventId) {
+        prepared._chatMemorySourceEventId = sourceEventId;
+      }
+      return sourceEventId || "";
+    } catch (error) {
+      console.warn(`[chat-memory] user capture failed: ${error.message}`);
+      return "";
+    }
+  }
+
+  async buildMemoryInjectionText({ prepared, text = "", now = new Date() } = {}) {
+    const blocks = [];
+    try {
+      if (this.chatMemory?.memory?.isInjectEnabled?.()) {
+        const results = await this.chatMemory.memory.retrieveForTurn({
+          text,
+          prepared,
+          now,
+          limit: resolveRecallLimit(this.chatMemory.memory, this.config),
+        });
+        const context = this.chatMemory.memory.formatForInjection(results);
+        if (context) {
+          blocks.push(context);
+        }
+      }
+    } catch (error) {
+      console.warn(`[chat-memory] retrieval failed: ${error.message}`);
+    }
+    try {
+      if (this.chatMemory?.promises && this.config.promisePassiveInjectEnabled !== false) {
+        const duePromises = this.chatMemory.promises.retrieveDueForTurn({
+          now,
+          bindingKey: prepared?.bindingKey || "",
+          workspaceRoot: prepared?.workspaceRoot || "",
+          accountId: prepared?.accountId || "",
+          limit: 2,
+        });
+        const dueContext = this.chatMemory.promises.formatDueForInjection(duePromises);
+        if (dueContext) {
+          blocks.push(dueContext);
+          this.chatMemory.promises.markInjected(duePromises.map((promise) => promise.id), { at: now });
+        }
+      }
+    } catch (error) {
+      console.warn(`[chat-memory] promise retrieval failed: ${error.message}`);
+    }
+    return blocks.filter(Boolean).join("\n\n");
+  }
+
+  async buildPromiseCheckText({ prepared, text = "", now = new Date() } = {}) {
+    try {
+      if (!this.chatMemory?.promises || this.config.promisePassiveInjectEnabled === false) {
+        return "";
+      }
+      const duePromises = this.chatMemory.promises.retrieveDueForTurn({
+        now,
+        bindingKey: prepared?.bindingKey || "",
+        workspaceRoot: prepared?.workspaceRoot || "",
+        accountId: prepared?.accountId || "",
+        limit: 2,
+      });
+      if (!duePromises.length) {
+        return "";
+      }
+      const context = this.chatMemory.promises.formatDueForInjection(duePromises);
+      this.chatMemory.promises.markInjected(duePromises.map((promise) => promise.id), { at: now });
+      return context;
+    } catch (error) {
+      console.warn(`[chat-memory] promise check failed: ${error.message}`);
+      return "";
+    }
+  }
+
+  async captureRuntimeTurnResult(event, linked) {
+    if (!this.chatMemory?.capture && !this.chatMemory?.promises) {
+      return;
+    }
+    const threadId = event?.payload?.threadId || "";
+    const turnId = event?.payload?.turnId || "";
+    const runKey = buildRunKey(threadId, turnId);
+    const threadKey = buildRunKey(threadId, "");
+    const accumulator = this._chatMemoryReplyAccumulator && typeof this._chatMemoryReplyAccumulator.get === "function"
+      ? this._chatMemoryReplyAccumulator
+      : new Map();
+    const text = normalizeText(
+      accumulator.get(runKey)
+      || accumulator.get(threadKey)
+      || event?.payload?.text
+      || ""
+    );
+    if (event?.type === "runtime.turn.completed") {
+      await this.chatMemory?.capture?.appendAssistantCompleted?.({
+        threadId,
+        turnId,
+        text,
+        linked,
+      }).catch((error) => {
+        console.warn(`[chat-memory] assistant capture failed: ${error.message}`);
+      });
+      if (text && this.chatMemory?.promises) {
+        const created = await this.chatMemory.promises.captureAssistantPromise({
+          threadId,
+          turnId,
+          text,
+          bindingKey: linked?.bindingKey || "",
+          workspaceRoot: linked?.workspaceRoot || "",
+          accountId: linked?.accountId || "",
+          senderId: linked?.senderId || "",
+          source: {
+            threadId,
+            turnId,
+          },
+        }).catch((error) => {
+          console.warn(`[chat-memory] promise capture failed: ${error.message}`);
+          return [];
+        });
+        if (Array.isArray(created) && created.length && this.config.promiseActiveTriggerEnabled) {
+          for (const promise of created) {
+            this.chatMemory.promises.maybeQueueActiveCheck(promise);
+          }
+        }
+      }
+    } else if (event?.type === "runtime.turn.failed") {
+      await this.chatMemory?.capture?.appendAssistantFailed?.({
+        threadId,
+        turnId,
+        text: text || event?.payload?.text || "",
+        linked,
+      }).catch((error) => {
+        console.warn(`[chat-memory] assistant failure capture failed: ${error.message}`);
+      });
+    }
+    if (threadId) {
+      accumulator.delete(runKey);
+      accumulator.delete(threadKey);
+    }
+  }
+
   async handleRuntimeEvent(event) {
     const failureReplyTarget = event?.type === "runtime.turn.failed"
       ? this.streamDelivery.resolveReplyTargetForRun({
@@ -1942,23 +2252,33 @@ class CyberbossApp {
     if (!event) {
       return;
     }
+    const aiReplyTextAccumulator = ensureMapAccumulator(this, "_aiReplyTextAccumulator");
+    const chatMemoryReplyAccumulator = ensureMapAccumulator(this, "_chatMemoryReplyAccumulator");
 
     // 积累 AI 回复文本，用于关键词触发
     if (event.type === "runtime.reply.completed" && event.payload?.text && event.payload?.threadId) {
       const tid = event.payload.threadId;
-      const existing = this._aiReplyTextAccumulator.get(tid) || "";
-      this._aiReplyTextAccumulator.set(tid, existing + "\n" + event.payload.text);
+      const existing = aiReplyTextAccumulator.get(tid) || "";
+      aiReplyTextAccumulator.set(tid, existing + "\n" + event.payload.text);
+      const runKey = buildRunKey(event.payload.threadId, event.payload.turnId);
+      const runExisting = chatMemoryReplyAccumulator.get(runKey) || "";
+      chatMemoryReplyAccumulator.set(runKey, `${runExisting}\n${event.payload.text}`.trim());
+      if (event.payload.turnId) {
+        const threadKey = buildRunKey(event.payload.threadId, "");
+        const threadExisting = chatMemoryReplyAccumulator.get(threadKey) || "";
+        chatMemoryReplyAccumulator.set(threadKey, `${threadExisting}\n${event.payload.text}`.trim());
+      }
     }
 
     if (event.type === "runtime.turn.completed" || event.type === "runtime.turn.failed") {
       // 扫描 AI 回复中的关键词
       if (this.projectServices?.desire && event.type === "runtime.turn.completed") {
         const tid = event.payload?.threadId || "";
-        const aiText = this._aiReplyTextAccumulator.get(tid) || event.payload?.text || "";
+        const aiText = aiReplyTextAccumulator.get(tid) || event.payload?.text || "";
         if (aiText) {
           this.projectServices.desire.scanTextTriggers(aiText);
         }
-        this._aiReplyTextAccumulator.delete(tid);
+        aiReplyTextAccumulator.delete(tid);
       }
 
       const completedRunKey = buildRunKey(event.payload.threadId, event.payload.turnId);
@@ -1972,7 +2292,15 @@ class CyberbossApp {
         : "";
       const sessionStore = this.runtimeAdapter.getSessionStore();
       sessionStore.clearApprovalPrompt(event.payload.threadId);
-      const linked = this.runtimeAdapter.getSessionStore().findBindingForThreadId(event.payload.threadId);
+      const linked = sessionStore.findBindingForThreadId(event.payload.threadId);
+      const binding = linked?.bindingKey && typeof sessionStore.getBinding === "function"
+        ? sessionStore.getBinding(linked.bindingKey)
+        : null;
+      await this.captureRuntimeTurnResult(event, {
+        ...(linked || {}),
+        accountId: normalizeText(binding?.accountId),
+        senderId: normalizeText(binding?.senderId),
+      });
       const scopeKey = linked?.bindingKey && linked?.workspaceRoot
         ? buildScopeKey(linked.bindingKey, linked.workspaceRoot)
         : "";
@@ -2214,6 +2542,19 @@ function buildRunKey(threadId, turnId) {
   return `${normalizeCommandArgument(threadId)}:${normalizeCommandArgument(turnId)}`;
 }
 
+function ensureMapAccumulator(target, propertyName) {
+  if (!target || typeof propertyName !== "string") {
+    return new Map();
+  }
+  const current = target[propertyName];
+  if (current && typeof current.get === "function" && typeof current.set === "function" && typeof current.delete === "function") {
+    return current;
+  }
+  const next = new Map();
+  target[propertyName] = next;
+  return next;
+}
+
 function normalizeReplyTarget(target) {
   if (!target?.userId || !target?.contextToken) {
     return null;
@@ -2326,7 +2667,7 @@ function buildDesireUsageText() {
     "/desire off",
     "/desire tick",
     "/desire feed <drive> [flit|fixation] <text>",
-    "/desire satisfy <web_browse|flirt|reflect|follow_up|seduce|vent|none>",
+    "/desire satisfy <web_browse|reach_out|reflect|follow_up|seduce|vent|none>",
   ].join("\n");
 }
 
@@ -2341,7 +2682,7 @@ function extractDesireActionFromSystemText(text) {
 }
 
 function isKnownDesireAction(action) {
-  return ["web_browse", "flirt", "reflect", "follow_up", "seduce", "vent", "none"].includes(normalizeCommandArgument(action));
+  return ["web_browse", "reach_out", "reflect", "follow_up", "seduce", "vent", "none"].includes(normalizeCommandArgument(action));
 }
 
 function formatDriveBar(value) {
@@ -2749,6 +3090,30 @@ function buildReminderSystemTrigger(reminder, config = {}) {
   const reminderText = String(reminder?.text || "").trim();
   const userName = String(config?.userName || "").trim() || "the user";
   return `Due reminder for ${userName}: ${reminderText}`;
+}
+
+function buildPromiseSystemTrigger(promise) {
+  return [
+    "Promise todo due for model self-check.",
+    `Promise: ${normalizeText(promise?.text)}`,
+    `Due type: ${normalizeText(promise?.dueType) || "unknown"}`,
+    promise?.dueAt ? `Due at: ${normalizeText(promise.dueAt)}` : "",
+    "Check whether to naturally continue or act on this promise. Do not mention internal scheduling.",
+  ].filter(Boolean).join("\n");
+}
+
+function resolveRecallLimit(memoryService, config = {}) {
+  const serviceLimit = typeof memoryService?.getInjectLimit === "function"
+    ? memoryService.getInjectLimit()
+    : null;
+  if (Number.isFinite(serviceLimit)) {
+    return Math.max(0, serviceLimit);
+  }
+  const configLimit = Number(config?.chatMemoryInjectLimit);
+  if (Number.isFinite(configLimit)) {
+    return Math.max(0, configLimit);
+  }
+  return 6;
 }
 
 function buildScopeKey(bindingKey, workspaceRoot) {

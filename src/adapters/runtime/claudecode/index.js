@@ -271,7 +271,12 @@ function createClaudeCodeRuntimeAdapter(config) {
       const { client, threadId: activeThreadId } = attached;
       const wechatTime = new Date().toLocaleString('zh-CN', { hour12: false });
       const taggedUserText = `[苏苏 · ${wechatTime}]\n${text || ''}`.trim();
-      const outboundText = openingTurn ? buildOpeningTurnText(config, taggedUserText) : taggedUserText;
+      const openingContext = openingTurn
+        ? sessionStore.takeNextOpeningContextForWorkspace(bindingKey, workspaceRoot)
+        : "";
+      const outboundText = openingTurn
+        ? buildOpeningTurnText(config, openingContext ? appendPrivateOpeningContext(taggedUserText, openingContext) : taggedUserText)
+        : taggedUserText;
       let outboundThreadId = activeThreadId || threadId || `pending-${Date.now()}`;
       console.log(
         `[claudecode-runtime] sendTextTurn workspace=${workspaceRoot} opening=${openingTurn} requestedThread=${threadId || "(new)"} outboundThread=${outboundThreadId}`
@@ -338,17 +343,32 @@ function createClaudeCodeRuntimeAdapter(config) {
       try {
         // 1. 引入 Node.js 原生的路径拼接模块
         const path = require('path');
-        
+
         // 2. 动态定位到项目根目录下的 vibe_system/vibe_middleware
         const middlewarePath = path.join(process.cwd(), 'vibe_system', 'vibe_middleware');
-        
+
         // 3. 动态 require 引入
         const { getVibeInjection } = require(middlewarePath);
-        
+
         const vibeAddon = getVibeInjection();
-        finalText = outboundText + vibeAddon; 
+        finalText = outboundText + vibeAddon;
       } catch (err) {
         console.error("[VibePlugin Error] 路径解析或中间件执行失败:", err);
+      }
+
+      // 记忆工具提示注入：当用户消息包含记忆关键词时提醒使用记忆库工具
+      if (metadata._memoryHint) {
+        const reminderMap = {
+          '记住': '记住某些内容',
+          '以后': '未来相关内容',
+          '别忘了': '避免遗忘',
+          '记下来': '记录某些内容',
+          '保存': '保存某些内容',
+          '存档': '归档某些内容',
+          '还记得': '回忆之前的内容',
+        };
+        const hintDesc = reminderMap[metadata._memoryHint] || '记忆相关';
+        finalText = finalText + `\n\n[提醒：苏苏刚才暗示了"${hintDesc}"。如果合适，你可以使用 breath 检索记忆、hold 存储新印象，或 grow 归档当前对话到长期记忆库。记忆工具(breath/hold/grow)通过 Ombre-Brain MCP 可用。]`;
       }
       // ========================================================
 
@@ -409,4 +429,18 @@ function clientMatchesThread(client, threadId) {
   }
   return normalizeThreadId(client.sessionId) === normalizedThreadId
     || normalizeThreadId(client.resumeSessionId) === normalizedThreadId;
+}
+
+function appendPrivateOpeningContext(text, context) {
+  const normalizedText = typeof text === "string" ? text.trim() : "";
+  const normalizedContext = typeof context === "string" ? context.trim() : "";
+  if (!normalizedContext) {
+    return normalizedText;
+  }
+  return [
+    normalizedContext,
+    "",
+    "Current user message:",
+    normalizedText,
+  ].join("\n").trim();
 }

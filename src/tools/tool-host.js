@@ -13,11 +13,13 @@ class ProjectToolHost {
   }
 
   listTools() {
-    const builtIn = PROJECT_TOOLS.map((tool) => ({
-      name: tool.name,
-      description: buildToolDescription(tool),
-      inputSchema: tool.inputSchema,
-    }));
+    const builtIn = PROJECT_TOOLS
+      .filter((tool) => tool.name !== "cyberboss_memory2_search" || this.services.chatMemory)
+      .map((tool) => ({
+        name: tool.name,
+        description: buildToolDescription(tool),
+        inputSchema: tool.inputSchema,
+      }));
     const extra = this.extraToolHosts.flatMap((host) => host.listTools());
     return [...builtIn, ...extra];
   }
@@ -68,6 +70,46 @@ function listProjectToolNames() {
 }
 
 const PROJECT_TOOLS = [
+  {
+    name: "cyberboss_memory2_search",
+    description: "Search the new chat-log memory layer. This is separate from Ombre-Brain tools such as grow, breath, and hold.",
+    shortHint: "Search the new chat-log memory layer.",
+    topics: ["memory"],
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Search query." },
+        limit: { type: "integer", description: "Maximum number of results." },
+        memoryTypes: {
+          type: "array",
+          items: { type: "string" },
+        },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const service = requireChatMemoryService(services);
+      const results = await service.search({
+        query: args.query,
+        limit: args.limit ?? 6,
+        filters: {
+          memoryTypes: Array.isArray(args.memoryTypes) ? args.memoryTypes : [],
+          bindingKey: context.bindingKey || "",
+          workspaceRoot: context.workspaceRoot || "",
+        },
+      });
+      return {
+        text: service.formatForInjection(results, {
+          title: "你从记忆深处找到了这些——关于你和苏苏的过往：",
+        }),
+        data: {
+          count: results.length,
+          results,
+        },
+      };
+    },
+  },
   {
     name: "cyberboss_diary_append",
     description: "Append a diary entry into Cyberboss local diary storage.",
@@ -209,14 +251,14 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_desire_satisfy",
-    description: "Apply desire satisfaction decay for a completed action such as web_browse, flirt, reflect, follow_up, seduce, vent, or none.",
+    description: "Apply desire satisfaction decay for a completed action such as web_browse, reach_out, reflect, follow_up, seduce, vent, or none.",
     shortHint: "Apply desire satisfaction decay.",
     topics: ["desire"],
     inputSchema: {
       type: "object",
       required: ["action"],
       properties: {
-        action: { type: "string", description: "Action: web_browse, flirt, reflect, follow_up, seduce, vent, or none." },
+        action: { type: "string", description: "Action: web_browse, reach_out, reflect, follow_up, seduce, vent, or none." },
       },
       additionalProperties: false,
     },
@@ -654,6 +696,13 @@ function requireDesireService(services = {}) {
     throw new Error("Desire service is not initialized.");
   }
   return services.desire;
+}
+
+function requireChatMemoryService(services = {}) {
+  if (!services.chatMemory) {
+    throw new Error("Chat memory service is not initialized.");
+  }
+  return services.chatMemory;
 }
 
 function normalizeText(value) {

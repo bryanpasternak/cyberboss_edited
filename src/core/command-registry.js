@@ -107,7 +107,7 @@ const COMMAND_GROUPS = [
       },
       {
         action: "thread.new",
-        summary: "Switch to a fresh thread draft",
+        summary: "Switch to a fresh thread draft and prime it with prior recap and memories",
         terminal: [],
         weixin: ["/new"],
         telegram: ["/new"],
@@ -167,6 +167,14 @@ const COMMAND_GROUPS = [
         terminal: [],
         weixin: ["/chunk <number>"],
         telegram: ["/chunk <number>"],
+        status: "active",
+      },
+      {
+        action: "memory.recall",
+        summary: "Control automatic memory recall and the number of retrieved memories",
+        terminal: [],
+        weixin: ["/recall", "/recall on", "/recall off", "/recall <number>"],
+        telegram: ["/recall", "/recall on", "/recall off", "/recall <number>"],
         status: "active",
       },
     ],
@@ -449,6 +457,7 @@ function actionEmoji(action) {
     case "thread.switch": return "🔀";
     case "thread.stop": return "⏹️";
     case "system.checkin_range": return "⏰";
+    case "memory.recall": return "🧠";
     case "approval.accept_once": return "✅";
     case "approval.accept_workspace": return "💡";
     case "approval.reject_once": return "❌";

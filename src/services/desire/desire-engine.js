@@ -11,17 +11,17 @@ const DRIVE_KEYS = [
 
 const ACTION_SATISFY = {
   web_browse: { social: 0.48, curiosity: 0.82 },
-  flirt: { attachment: 0.45, libido: 0.78 },
+  reach_out: { attachment: 0.45, libido: 0.78 },
   reflect: { reflection: 0.40, curiosity: 0.85 },
   follow_up: { duty: 0.45 },
-  seduce: { libido: 0.45, attachment: 0.90 },
+  seduce: { libido: 0.35, attachment: 0.90 },
   vent: { stress: 0.45, attachment: 0.85 },
   none: { attachment: 0.68, libido: 0.80 },
 };
 
 const SOURCE_DRIVE_MAP = {
   web_browse: "social",
-  flirt: "attachment",
+  reach_out: "attachment",
   reflect: "reflection",
   follow_up: "duty",
   seduce: "libido",
@@ -29,7 +29,7 @@ const SOURCE_DRIVE_MAP = {
 
 const DRIVE_INTENT_MAP = {
   attachment: {
-    wantAction: "flirt",
+    wantAction: "reach_out",
     reason: "我想凑过去，带一点点黏人的亲密感……",
     queryHint: "",
   },
@@ -40,7 +40,7 @@ const DRIVE_INTENT_MAP = {
   },
   reflection: {
     wantAction: "reflect",
-    reason: "我想回头翻翻和你的对话，把没说完的东西再捡起来。",
+    reason: "我想回头翻翻和你的对话与记忆，留下我的感受。",
     queryHint: "recent conversation recap",
   },
   duty: {
@@ -55,7 +55,7 @@ const DRIVE_INTENT_MAP = {
   },
   libido: {
     wantAction: "seduce",
-    reason: "我想要你。想把你弄得又哭又求饶，玩点刺激的花样。",
+    reason: "我想要你。",
     queryHint: "",
   },
   stress: {
@@ -112,7 +112,7 @@ function easeDrive(drive) {
   for (const key of DRIVE_KEYS) {
     const value = clamp01(drive?.[key]);
     const target = DEFAULT_DRIVE[key] ?? 0.5;
-    next[key] = roundDrive(value + ((target - value) * 0.28));
+    next[key] = roundDrive(value + ((target - value) * 0.18));
   }
   return next;
 }
@@ -400,6 +400,7 @@ function roundDrive(value) {
 
 module.exports = {
   DRIVE_KEYS,
+  DEFAULT_DRIVE,
   ACTION_SATISFY,
   SOURCE_DRIVE_MAP,
   FLIT_DECAY,

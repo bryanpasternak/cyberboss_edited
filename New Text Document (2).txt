@@ -1,0 +1,416 @@
+好，全读完了。现在给你完整的分析 + 代码计划。
+
+---
+一、changelog 方案对你的适用性分析
+
+changelog 方案的核心假设和你不同：
+
+┌──────────────┬────────────────────────────────────────────────┬───────────────────────┐
+│     维度     │                changelog 的做法                │     你的实际情况      │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ 数据源       │ 日记（人工写的结构化文本）                     │ 聊天记录（对话流）    │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ 抓取方式     │ CLI 手动 npm run memory:sync                   │ 自动管道截获          │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ 分片粒度     │ 按日记的 ## HH:mm Title 天然分段               │ 需要按对话轮次/语义切 │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ 嵌入方式     │ local-hashed-ngram-512（无 API）或 OpenAI 兼容 │ 你明确想用 Qwen       │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ 注入时机     │ 仅在新线程 / compact 后                        │ 每次对话都需要        │
+├──────────────┼────────────────────────────────────────────────┼───────────────────────┤
+│ Promise 系统 │ 无                                             │ 你想要                │
+└──────────────┴────────────────────────────────────────────────┴───────────────────────┘
+
+可以直接拿来用的部分：
+- [长期记忆参考] 块的格式约定（[苏苏说过] / [阿星说过] 标签）
+- JSONL 存储格式（append-only，一行一个 chunk）
+- 从 buildRuntimeTurn 注入记忆到模型上下文的模式（changelog 在 codex 那边做，claudecode 这边注释掉了但骨架在）
+- memory-items.js 里封装 OpenAI 兼容嵌入调用的代码结构
+
+需要重新设计的部分： 自动捕获管道、30 分钟闲置分片、Promise 系统。
+
+---
+二、整体架构
+
+用户消息 → handlePreparedMessage()
+                    │
+                    ▼
+              ChatCaptureService ← 同时存用户消息
+              .append(timestamp, "user", text)
+                    │
+                    ▼
+              发模型 → 模型回复
+                    │
+                    ▼
+              ChatCaptureService ← 存模型回复
+              .append(timestamp, "assistant", text)
+                    │
+                    ▼
+              重置30分钟定时器 ← 每次有新消息就重置
+                    │
+        30分钟无消息 → 触发分片
+                    │
+                    ▼
+              读取未处理片段
+                    │
+                    ▼
+              调用 Qwen 嵌入 (DashScope API)
+                    │
+                    ▼
+              写入 memory2/chunks.jsonl
+                    │
+                    ▼
+              更新时间索引
+
+           ┌─── 下次对话 ─────────────────────┐
+           │                                    │
+           ▼                                    │
+    buildRuntimeTurn()                          │
+           │                                    │
+           ▼                                    │
+    Memory2Service.retrieve()                   │
+      → 向量检索 top-K（Qwen 嵌入相似度）      │
+      → 时间标签匹配（当前时段）               │
+      → Promise 检查（到期承诺）               │
+           │                                    │
+           ▼                                    │
+    [长期记忆参考] 块 ← 注入到模型上下文      │
+           │                                    │
+           ▼                                    │
+    发模型 → 产生回复 → ChatCapture ──────────┘
+
+---
+三、文件结构
+
+../.cyberboss/
+├── chatlog/                         ← 原始聊天记录，append-only
+│   ├── 2026-06-16.jsonl             { timestamp, role, text, turnId }
+│   └── 2026-06-17.jsonl
+│
+├── memory2/                         ← 新记忆系统
+│   ├── chunks.jsonl                 ← 所有分片，每行一个 chunk
+│   │                                 { id, timestamp, date, text,
+│   │                                   role:"user"|"assistant"|"mixed",
+│   │                                   embedding:[], tags:[],
+│   │                                   valence, arousal, turnRange }
+│   ├── index.json                   ← 快速检索索引
+│   │                                 { chunkCount, lastChunkedLine,
+│   │                                   dateRanges, lastUpdated }
+│   └── config.json                  ← 嵌入配置等
+│
+├── promises/                        ← 时间承诺清单
+│   ├── promises.json                ← 活跃承诺
+│   └── archive.jsonl                ← 已完成的承诺归档
+│
+└── chatlog-state.json               ← 捕获状态（最后捕获的行号）
+
+---
+四、分步实现计划
+
+Step 1: ChatCaptureService — 自动抓取聊天记录（不改动任何已有逻辑）
+
+新文件： src/services/chat-capture-service.js
+
+它在消息流中做两件事：
+
+捕获点 A — 用户消息（app.js handlePreparedMessage 之后）：
+app.handlePreparedMessage() 末尾
+  → chatCapture.append({
+      timestamp: now,
+      role: "user",
+      text: normalized.text,
+      turnId: currentTurnId
+    })
+
+捕获点 B — 模型回复（app.js handleRuntimeEvent 中）：
+runtime.turn.completed 事件
+  → chatCapture.append({
+      timestamp: now,
+      role: "assistant",
+      text: accumulatedReplyText,
+      turnId: event.payload.turnId
+    })
+
+日志写 ../.cyberboss/chatlog/YYYY-MM-DD.jsonl，每行一个 JSON，append-only，绝不丢数据。
+
+同时维护一个"消息收数桶"：每次 append 就把这一轮对话（user+assistant 配对）推进一个内存队列，重置 30 分钟定时器。
+
+chatCapture.append()
+  → 写入 chatlog/YYYY-MM-DD.jsonl（立即持久化，绝不丢）
+  → 把 { userText, assistantText, timestamp } 推入 pendingPairs[]
+  → 清空并重启 idleTimer（30分钟）
+
+---
+Step 2: Memory2Chunker — 闲置 30 分钟后自动分片
+
+新文件： src/services/memory2-chunker-service.js
+
+30 分钟无新消息时触发：
+
+onIdleTimeout()
+  → 取出 pendingPairs[] 中所有未处理的对话对
+  → 按策略分片：
+     策略 A：连续对话，每 3-5 轮合成一个 chunk
+     策略 B：如果单轮对话很长（>500 字），单独成一个 chunk
+     策略 C：时间间隔 >10 分钟，强制新 chunk
+  → 对每个 chunk 计算基础 metadata：
+     { date, hourRange, participants, roughTopic,
+       wordCount, turnCount }
+  → 调用 Qwen embedding API 获取向量
+  → 写入 memory2/chunks.jsonl
+  → 更新 memory2/index.json
+
+分片策略细节：
+
+原始消息流（append-only）:
+  10:01  user: 今天心情不好
+  10:01  assistant: 怎么了？跟我说说
+  10:03  user: 工作上的事
+  10:05  assistant: 具体什么情况？
+  10:06  user: 被老板说了...（300字长文）
+  10:20  user: 算了不说了   ← 间隔 >10分钟，新chunk
+  10:21  assistant: 抱抱
+
+分片结果：
+  chunk1: [10:01-10:06] "今天心情不好 / 怎么了跟我说说 / 工作上的事 / 具体什么情况 / 被老板说了..."
+  chunk2: [10:20-10:21] "算了不说了 / 抱抱"
+
+为什么不每轮都分？
+- 对话进行中分片会切到一半切出无意义片段
+- 30 分钟等待确保一段对话基本结束了
+- 也给了足够时间让整个对话的上下文完整
+
+---
+Step 3: Memory2Service — 检索与注入
+
+新文件： src/services/memory2-service.js
+
+核心接口：
+
+class Memory2Service {
+  constructor(basePath) // basePath = ../.cyberboss/memory2
+
+  // 检索：三路召回
+  async retrieve(query, options = {}) {
+    // 1. 向量相似度检索（Qwen embedding）
+    const qVec = await this.embed(query)
+    const semanticHits = this.cosSimSearch(qVec, topK=5)
+
+    // 2. 时间标签匹配（当前时段）
+    const now = new Date()
+    const timeHits = this.matchTimeTag(now, topK=3)
+
+    // 3. 合并去重
+    return this.dedupAndRank([
+      ...semanticHits,
+      ...timeHits,
+    ]).slice(0, 8)
+  }
+
+  // 嵌入调用
+  async embed(text) {
+    // 调用 DashScope/通义千问 embedding API
+    // POST https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding
+    // model: text-embedding-v2
+  }
+
+  // 注入到模型上下文
+  formatMemoryContext(chunks) {
+    return chunks.map(c =>
+      `[${c.date}] ${c.summary}`
+    ).join('\n')
+  }
+}
+
+注入点 — 修改 buildRuntimeTurn()（app.js 约 669 行）或 claudecode/index.js 的 sendTurn（第 337-368 行之间，vibe 注入后面、_memoryHint 提醒前面）：
+
+// 在 buildRuntimeTurn 或 sendTurn 中
+const memoryCtx = await memory2Service.retrieve(userText, { topK: 5 })
+const promiseCtx = await promiseService.checkDue()
+
+finalText = outboundText
+  + memoryCtx  // [长期记忆参考] 块
+  + promiseCtx // [待办承诺提醒] 块
+  + vibeAddon
+
+---
+Step 4: PromiseService — 时间承诺清单
+
+新文件： src/services/promise-service.js
+
+思路： 一个轻量的「承诺清单」，关键不在 AI 而在解析和调度。
+
+数据模型：
+
+{
+  id: "prom_20260616_001",
+  text: "今晚陪你做",           // 原始文本
+  madeAt: "2026-06-16T10:30",   // 承诺时间
+  dueAt: "2026-06-16T20:00",    // 解析出的到期时间
+  dueType: "tonight",            // 原始时间词：今晚、明早、周末
+  fulfilled: false,
+  contextChunkId: "chunk_xxx",  // 关联的聊天分片
+  sourceChatlogLine: 42,        // 原始聊天记录行号
+  tags: ["promise", "intimate"],
+  note: ""                      // 可选补充
+}
+
+核心流程：
+
+Step A — 解析承诺（由谁来做？）：
+
+  方案 A1：分片时用 Qwen 批量分析
+    → 产出："chunk包含承诺→提取→写入promises.json"
+    → 优点：模型不参与，纯系统行为
+    → 缺点：实时性差（等30分钟）
+
+  方案 A2：在 ChatCaptureService 中设轻量关键词检测
+    → 匹配 "今晚|明天|周末|回头|改天|下次|记账" + "做|陪|请|给|带|买|约"
+    → 命中后标记该轮对话，分片时优先提取
+    → 优点：快，不影响主流程
+
+Step B — 时间解析：
+
+  简单规则引擎（不依赖NLP）：
+    今晚  → dueAt = 当天 20:00
+    明早  → dueAt = 次日 08:00
+    明天  → dueAt = 次日 12:00
+    周末  → dueAt = 下一个周六 20:00
+    回头/改天/下次 → 3天后
+    具体时间 "晚上8点" → 当天 20:00
+
+Step C — 到期检索与注入：
+
+  promiseService.checkDue()
+    → 遍历 promises.json 中 fulfilled=false 的条目
+    → dueAt ≤ now 且 within(now, dueAt, +2h) 视为到期
+    → 返回到期承诺列表
+    → 格式化成 [待办承诺提醒] 块注入模型
+
+Step D — 承诺维护（由谁来标记完成？）：
+
+  方式一：模型主动调用（需要 MCP 工具 promise_fulfill）
+  方式二：聊天记录分析——模型回复中提到"做了""完成了"时自动标记
+  方式三：保留手动标记余地
+
+---
+Step 5: 注入到消息流
+
+改动的文件：
+
+┌──────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────┐
+│                   文件                   │                               改动内容                                │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ src/services/chat-capture-service.js     │ 新建                                                                  │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ src/services/memory2-service.js          │ 新建（含 Qwen 嵌入调用）                                              │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ src/services/memory2-chunker-service.js  │ 新建（30 分钟定时分片）                                               │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ src/services/promise-service.js          │ 新建                                                                  │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│                                          │ 加 ~30 行：handlePreparedMessage 末尾调                               │
+│ src/core/app.js                          │ capture.append；handleRuntimeEvent 中 runtime.turn.completed 处调     │
+│                                          │ capture.appendAssistant                                               │
+├──────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────┤
+│ src/adapters/runtime/claudecode/index.js │ 加 ~15 行：buildRuntimeTurn 或 sendTurn 中注入 memory2 检索结果       │
+└──────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────┘
+
+不做侵入式修改的原则：
+- capture 是 append 模式——不会因为 memory2 出问题影响主流程
+- 注入是 try/catch 包裹——检索失败就跳过，不强依赖
+- 分片是后台定时器——不阻塞消息处理
+
+---
+五、关于分类维度（你问的"情绪值"）
+
+聊天记录分片之后可以挂这些元数据，每个维度解释一下：
+
+1. Sentiment / Valence（情感倾向 -1~1）：
+-1.0        0         1.0
+ 负面    中性      正面
+愤怒      平淡      开心
+悲伤      陈述      兴奋
+如何得到：调用 Qwen 时传一个分类 prompt，或者用一个情感分类模型。最简单：嵌入后拿文本让 Qwen 打分。
+
+2. Arousal（唤醒度 0~1）：
+0          0.5        1.0
+平静    中等    高度唤醒
+无聊    专注      兴奋/焦虑
+想睡    日常      高潮/争吵
+情绪值 + 唤醒度这两个维度合在一起叫 Valence-Arousal 模型，是情感计算里最常用的框架。Ombre-Brain 里已经有 valence 和 arousal 两个字段。
+
+3. 时间标签：
+- morning（06-12）, afternoon（12-18）, evening（18-22）, night（22-06）
+- 用于时间标签匹配——晚上检索时优先召回晚上的片段
+
+4. 对话类型标签（tags）：
+- casual（闲聊）, emotional（情感）, technical（技术）, intimate（亲密）, conflict（冲突）, planning（计划/承诺）
+
+5. 要不要现在搞这么复杂？
+
+我的建议：初期只存 4 个字段：
+
+{
+  chunkId: "20260616_001",
+  date: "2026-06-16",
+  timeRange: "10:01-10:06",
+  text: "...",           // 分片文本
+  embedding: [...],      // Qwen 向量
+  // 以下逐步加
+  summary: "",           // Qwen 自动摘要
+  tags: [],              // 后期从文本提取
+  valence: 0,            // 后期分析
+  arousal: 0             // 后期分析
+}
+
+检索先用向量相似度 + 时间标签。先跑起来，再慢慢加分类，不要一开始把所有维度做完。
+
+---
+六、关于 Qwen 嵌入调用
+
+最简单的方式：
+
+// DashScope OpenAI 兼容接口
+async function embed(texts) {
+  const response = await fetch(
+    "https://dashscope.aliyuncs.com/compatible-mode/v1/embeddings",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${process.env.DASHSCOPE_API_KEY}`
+      },
+      body: JSON.stringify({
+        model: "text-embedding-v2",
+        input: texts  // 支持批量
+      })
+    }
+  )
+  const data = await response.json()
+  return data.data.map(item => item.embedding)
+}
+
+便宜： text-embedding-v2 千条文本几分钱，对个人使用接近免费。
+
+如果你不想调用外部 API 也行 — changelog 里已经有 local-hashed-ngram-512 的本地向量方案，零成本、零依赖，但效果比 Qwen 嵌入差一些。你可以在 config.json 里配置用哪种，可切换。
+
+---
+七、整体实现顺序
+
+第一周（核心功能）：
+  Step 1 → ChatCaptureService（不丢聊天记录是底线）
+  Step 2 → Memory2ChunkerService（30分钟分片）
+  Step 3 → Memory2Service 检索（向量 + 时间标签）
+  Step 4 → 接入 app.js + claudecode/index.js（注入模型）
+
+第二周（增强）：
+  Step 5 → PromiseService（承诺清单）
+  Step 6 → 分类维度逐步加上
+  Step 7 → 观察效果，对比 Ombre-Brain，决定是否合并
+
+注意 Step 1 和 2 是"数据管道"——即使后面不接检索，
+聊天记录也全部存下来了，不会有数据丢失的风险。
+
+---
+你想开始搞哪一步？ 我可以直接帮写代码，从 Step 1 的 ChatCaptureService 开始，把捕获管道搭好，聊天记录先存起来——后面的都是往这个管道上接。

@@ -211,7 +211,8 @@ function createCodexRuntimeAdapter(config) {
           throw new Error("thread/start did not return a thread id");
         }
         sessionStore.setThreadIdForWorkspace(bindingKey, workspaceRoot, threadId, metadata);
-        outboundText = buildOpeningTurnText(config, text);
+        const openingContext = sessionStore.takeNextOpeningContextForWorkspace(bindingKey, workspaceRoot);
+        outboundText = buildOpeningTurnText(config, openingContext ? appendPrivateOpeningContext(text, openingContext) : text);
       } else {
         await runtimeClient.resumeThread({
           threadId,
@@ -229,11 +230,12 @@ function createCodexRuntimeAdapter(config) {
             throw new Error("thread/start did not return a thread id");
           }
           sessionStore.setThreadIdForWorkspace(bindingKey, workspaceRoot, threadId, metadata);
+          const openingContext = sessionStore.takeNextOpeningContextForWorkspace(bindingKey, workspaceRoot);
           sessionStore.setRuntimeParamsForWorkspace(bindingKey, workspaceRoot, {
             model: desiredModel,
             modelProvider: desiredModelProvider,
           });
-          outboundText = buildOpeningTurnText(config, text);
+          outboundText = buildOpeningTurnText(config, openingContext ? appendPrivateOpeningContext(text, openingContext) : text);
         });
       }
 
@@ -267,6 +269,20 @@ function runtimeParamsMatch(storedParams, desiredParams) {
 function hasImageInputModality(model) {
   const modalities = Array.isArray(model?.inputModalities) ? model.inputModalities : [];
   return modalities.some((item) => normalizeText(item).toLowerCase() === "image");
+}
+
+function appendPrivateOpeningContext(text, context) {
+  const normalizedText = normalizeText(text);
+  const normalizedContext = normalizeText(context);
+  if (!normalizedContext) {
+    return normalizedText;
+  }
+  return [
+    normalizedContext,
+    "",
+    "Current user message:",
+    normalizedText,
+  ].join("\n").trim();
 }
 
 function waitForTurnCompletion(client, threadId) {

@@ -196,6 +196,59 @@ class SessionStore {
     return this.updateBinding(bindingKey, nextBinding);
   }
 
+  setNextOpeningContextForWorkspace(bindingKey, workspaceRoot, text = "", runtimeId = this.runtimeId) {
+    const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
+    const normalizedText = normalizeValue(text);
+    if (!normalizedWorkspaceRoot) {
+      return this.getBinding(bindingKey);
+    }
+    const current = this.getBinding(bindingKey) || {};
+    const normalizedRuntimeId = normalizeValue(runtimeId) || "default";
+    const nextOpeningContextByWorkspaceRootByRuntime = {
+      ...getOpeningContextRuntimeMap(current),
+      [normalizedRuntimeId]: {
+        ...getOpeningContextMapForRuntime(current, normalizedRuntimeId),
+        [normalizedWorkspaceRoot]: normalizedText,
+      },
+    };
+    return this.updateBinding(bindingKey, {
+      nextOpeningContextByWorkspaceRootByRuntime,
+    });
+  }
+
+  peekNextOpeningContextForWorkspace(bindingKey, workspaceRoot, runtimeId = this.runtimeId) {
+    const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
+    if (!normalizedWorkspaceRoot) {
+      return "";
+    }
+    const current = this.getBinding(bindingKey) || {};
+    return normalizeValue(getOpeningContextMapForRuntime(current, runtimeId)[normalizedWorkspaceRoot]);
+  }
+
+  takeNextOpeningContextForWorkspace(bindingKey, workspaceRoot, runtimeId = this.runtimeId) {
+    const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
+    if (!normalizedWorkspaceRoot) {
+      return "";
+    }
+    const current = this.getBinding(bindingKey) || {};
+    const normalizedRuntimeId = normalizeValue(runtimeId) || "default";
+    const map = {
+      ...getOpeningContextMapForRuntime(current, normalizedRuntimeId),
+    };
+    const text = normalizeValue(map[normalizedWorkspaceRoot]);
+    if (!text) {
+      return "";
+    }
+    map[normalizedWorkspaceRoot] = "";
+    this.updateBinding(bindingKey, {
+      nextOpeningContextByWorkspaceRootByRuntime: {
+        ...getOpeningContextRuntimeMap(current),
+        [normalizedRuntimeId]: map,
+      },
+    });
+    return text;
+  }
+
   setActiveWorkspaceRoot(bindingKey, workspaceRoot) {
     const normalizedWorkspaceRoot = normalizeValue(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
@@ -402,6 +455,18 @@ function getRuntimeParamsMapForRuntime(binding, runtimeId) {
     return {};
   }
   const scoped = getRuntimeParamsRuntimeMap(binding)[normalizedRuntimeId];
+  return scoped && typeof scoped === "object" ? scoped : {};
+}
+
+function getOpeningContextRuntimeMap(binding) {
+  return binding?.nextOpeningContextByWorkspaceRootByRuntime && typeof binding.nextOpeningContextByWorkspaceRootByRuntime === "object"
+    ? binding.nextOpeningContextByWorkspaceRootByRuntime
+    : {};
+}
+
+function getOpeningContextMapForRuntime(binding, runtimeId) {
+  const normalizedRuntimeId = normalizeValue(runtimeId) || "default";
+  const scoped = getOpeningContextRuntimeMap(binding)[normalizedRuntimeId];
   return scoped && typeof scoped === "object" ? scoped : {};
 }
 

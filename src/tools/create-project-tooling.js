@@ -8,6 +8,7 @@ const { StickerService } = require("../services/sticker-service");
 const { SystemMessageService } = require("../services/system-message-service");
 const { TimelineService } = require("../services/timeline-service");
 const { createDesireService } = require("../services/desire-service");
+const { createChatMemoryRuntime } = require("../services/chat-memory");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
 const { WhereaboutsService } = require("whereabouts-mcp");
@@ -23,11 +24,15 @@ function createProjectTooling(config, options = {}) {
     filePath: config.projectToolContextFile,
   });
   const channelFile = new ChannelFileService({ config, channelAdapter, sessionStore });
+  const chatMemoryRuntime = createChatMemoryRuntime({ config });
   const services = {
     diary: new DiaryService({ config }),
     reminder: new ReminderService({ config, sessionStore }),
     system: new SystemMessageService({ config, sessionStore }),
     channelFile,
+    chatMemory: chatMemoryRuntime.memory,
+    promiseMemory: chatMemoryRuntime.promises,
+    chatMemoryRuntime,
     desire: createDesireService(config),
     sticker: new StickerService({ config, channelAdapter, sessionStore, channelFileService: channelFile }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),

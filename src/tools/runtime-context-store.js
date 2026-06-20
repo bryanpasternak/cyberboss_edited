@@ -35,7 +35,7 @@ class RuntimeContextStore {
     accountId = "",
     senderId = "",
   } = {}) {
-    const normalizedWorkspaceRoot = normalizeText(workspaceRoot);
+    const normalizedWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
       return null;
     }
@@ -57,11 +57,16 @@ class RuntimeContextStore {
   }
 
   resolveActiveContext({ workspaceRoot = "", runtimeId = "" } = {}) {
-    const normalizedWorkspaceRoot = normalizeText(workspaceRoot);
+    const normalizedWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot);
     if (normalizedWorkspaceRoot) {
       const exact = this.state.contextsByWorkspaceRoot?.[normalizedWorkspaceRoot];
       if (exact) {
         return exact;
+      }
+      const equivalent = Object.entries(this.state.contextsByWorkspaceRoot || {})
+        .find(([key]) => normalizeWorkspaceRoot(key) === normalizedWorkspaceRoot);
+      if (equivalent?.[1]) {
+        return equivalent[1];
       }
     }
 
@@ -82,6 +87,14 @@ class RuntimeContextStore {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function normalizeWorkspaceRoot(value) {
+  const normalized = normalizeText(value);
+  if (!normalized) {
+    return "";
+  }
+  return path.resolve(normalized);
 }
 
 module.exports = { RuntimeContextStore };

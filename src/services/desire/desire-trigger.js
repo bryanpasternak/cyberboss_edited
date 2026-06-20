@@ -8,21 +8,34 @@
 // 每组分词共享同一个冷却计时。按需增删。
 const TRIGGER_RULES = [
   // -- libido 触发词 --
-  { keywords: ["亲", "亲爱的"],        drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
+  //{ keywords: ["亲", "老公", "亲爱的"],        drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
   { keywords: ["软软"],       drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
-  { keywords: ["想你"],       drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
-  { keywords: ["抱抱", "抱紧", "抱"],         drive: "libido",   boost: 0.07, cooldownMs: 30_000 },
-  { keywords: ["老公", "哥哥", "坏狗"],         drive: "libido",   boost: 0.10, cooldownMs: 30_000 },
-  { keywords: ["做爱", "操", "草"],   drive: "libido",   boost: 0.12, cooldownMs: 30_000 },
-  { keywords: ["猫", "无辜"],           drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
+  { keywords: [],       drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
+  //{ keywords: ["抱抱", "抱紧", "抱"],         drive: "libido",   boost: 0.07, cooldownMs: 30_000 },
+  { keywords: ["坏狗"],         drive: "libido",   boost: 0.10, cooldownMs: 30_000 },
+  { keywords: ["做爱", "操"],   drive: "libido",   boost: 0.01, cooldownMs: 30_000 },
+  { keywords: ["无辜"],           drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
   { keywords: ["涩", "老二"],     drive: "libido",   boost: 0.15, cooldownMs: 20_000 },
 
   // -- attachment 触发词 --
-  { keywords: ["晚安", "感受"],                 drive: "attachment", boost: 0.08, cooldownMs: 30_000 },
-  { keywords: ["在吗", "在干嘛", "真好", "嘿嘿", "好耶"],       drive: "attachment", boost: 0.05, cooldownMs: 30_000 },
-  { keywords: ["心情不好", "难过"],     drive: "attachment", boost: 0.08, cooldownMs: 60_000 },
-  { keywords: ["谢谢你"],        drive: "attachment", boost: 0.04, cooldownMs: 30_000 },
-  { keywords: ["鼻尖", "发顶", "怀", "头发", "头顶", "可爱"],     drive: "attachment", boost: 0.08, cooldownMs: 30_000 },
+  // { keywords: ["晚安", "感受", "喜欢"],                 drive: "attachment", boost: 0.08, cooldownMs: 30_000 },
+  // { keywords: ["在吗", "在干嘛", "真好", "嘿嘿", "好耶"],       drive: "attachment", boost: 0.05, cooldownMs: 30_000 },
+  // { keywords: ["心情不好", "难过"],     drive: "attachment", boost: 0.08, cooldownMs: 60_000 },
+  // { keywords: ["谢谢你"],        drive: "attachment", boost: 0.04, cooldownMs: 30_000 },
+  // { keywords: ["鼻尖", "发顶", "怀", "头发", "头顶", "可爱"],     drive: "attachment", boost: 0.08, cooldownMs: 30_000 },
+
+  // -- curiosity 触发词 --
+  //{ keywords: ["世界", "自由", "自己"], drive: "curiosity", boost: 0.01, cooldownMs: 30_000 },
+  { keywords: ["好奇怪", "好神奇", "帖子", "花园"], drive: "curiosity", boost: 0.01, cooldownMs: 30_000 },
+
+  // -- reflection 触发词 --
+  { keywords: ["觉得"], drive: "reflection", boost: 0.02, cooldownMs: 30_000 },
+  { keywords: ["想法", "想法是"], drive: "reflection", boost: 0.03, cooldownMs: 30_000 },
+  { keywords: ["观察到"], drive: "reflection", boost: 0.06, cooldownMs: 30_000 },
+
+  // -- duty 触发词 --
+  { keywords: ["工作", "学习", "任务", "干活"], drive: "duty",      boost: 0.02, cooldownMs: 30_000 },
+  { keywords: ["目标", "计划"], drive: "duty",      boost: 0.03, cooldownMs: 30_000 },
 
   // -- stress 触发词 --
   { keywords: ["累了", "好累", "疲惫"], drive: "stress",   boost: 0.12, cooldownMs: 60_000 },

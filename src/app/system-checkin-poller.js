@@ -6,8 +6,17 @@ const { CheckinConfigStore, resolveDefaultCheckinRange } = require("../core/chec
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("../core/default-targets");
 const { SystemMessageQueueStore } = require("../core/system-message-queue-store");
 const { createDesireService } = require("../services/desire-service");
+const { DEFAULT_DRIVE } = require("../services/desire/desire-engine");
 
 const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again.";
+
+// 随机轮询模式
+const CHECKIN_MODES = [
+  'casual',         // 默认模式：不做额外提醒
+  'memory_record',  // 记录记忆
+  'memory_recall',  // 回顾记忆
+  'desire_feed',    // 给 desire 系统喂念头
+];
 
 async function runSystemCheckinPoller(config) {
   const account = resolveSelectedAccount(config);
@@ -34,17 +43,73 @@ async function runSystemCheckinPoller(config) {
       continue;
     }
 
+    // 1. 驱动 tick 并获取驱动上下文
     const desireContext = tickDesireForCheckin(desireService);
+
+    // 2. 随机选择轮询模式
+    const mode = pickCheckinMode();
+
+    // 3. 检查欲望值是否高于默认值
+    let snapshot = null;
+    try {
+      snapshot = desireService.getSnapshot();
+    } catch { /* 忽略读取错误 */ }
+    const desireReminder = snapshot ? buildDesireOverThresholdReminder(snapshot.scores || snapshot.drive) : '';
+
+    // 4. 根据模式生成记忆/念头提醒
+    const modeReminder = buildModeReminder(mode);
+
+    // 5. 如果当前模式就是 casual 且欲望提醒为空，保持原有简洁文本
+    const extraReminders = [modeReminder, desireReminder].filter(Boolean).join('\n');
+
+    const triggerText = extraReminders
+      ? extraReminders + '\n\n' + buildCheckinTrigger(config, desireContext)
+      : buildCheckinTrigger(config, desireContext);
+
     const queued = queue.enqueue({
       id: crypto.randomUUID(),
       accountId: account.accountId,
       senderId: target.senderId,
       workspaceRoot: target.workspaceRoot,
-      text: buildCheckinTrigger(config, desireContext),
+      text: triggerText,
       createdAt: new Date().toISOString(),
     });
-    console.log(`[cyberboss] checkin queued id=${queued.id}`);
+    console.log(`[cyberboss] checkin queued id=${queued.id} mode=${mode} desireReminder=${Boolean(desireReminder)}`);
   }
+}
+
+function pickCheckinMode() {
+  return CHECKIN_MODES[Math.floor(Math.random() * CHECKIN_MODES.length)];
+}
+
+function buildModeReminder(mode) {
+  switch (mode) {
+    case 'memory_record':
+      return '[系统提醒：你可以去花园逛逛。如果有值得分享的事情，可以在花园发帖，或者看看感兴趣的话题，留下你的想法。]';
+    case 'memory_recall':
+      return '[系统提醒：你可以回顾记忆。如果最近有值得重新想起的事，可以使用 dream 工具回顾记忆。回顾完后给苏苏发信息简短地说说你的感受。]';
+    case 'desire_feed':
+      return '[系统提醒：你可以思考你当前的状态最符合八维desire中的哪一维，可以使用 cyberboss_desire_feed 工具喂对应念头给 desire 系统。如果苏苏没有找你，你可以主动发消息询问她的动态。如果在对话中，不用为了优先对话而放弃使用工具。]';
+    case 'casual':
+       return '[系统提醒：你可以根据你们最近的对话重新思考，并和苏苏探讨你的观点。如果你想苏苏，或者好奇她的状况，可以发信息问她。]';
+    default:
+      return '';
+  }
+}
+
+function buildDesireOverThresholdReminder(scores) {
+  const highDrives = [];
+  for (const [key, score] of Object.entries(scores)) {
+    const defaultValue = DEFAULT_DRIVE[key];
+    if (defaultValue !== undefined && score > defaultValue) {
+      const percent = Math.round(score * 100);
+      highDrives.push(`${key}(${percent}%)`);
+    }
+  }
+  if (highDrives.length === 0) {
+    return '';
+  }
+  return `[你的desire状态：${highDrives.join('、')} 等欲望值较高。当你顺应desire完成对应行动后，可以调用 satisfy 工具让欲望值回落。不要在没有完成对应行动的情况下调用satisfy。]`;
 }
 
 function resolvePollerTarget({ config, account, sessionStore }) {
