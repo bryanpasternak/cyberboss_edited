@@ -642,6 +642,7 @@ class CyberbossApp {
           accountId: prepared.accountId,
           senderId: prepared.senderId,
           _memoryHint: prepared._memoryHint || '',
+          provider: prepared.provider,
         },
       });
       await this.chatMemory?.capture?.appendTurnLinked?.({

@@ -270,7 +270,10 @@ function createClaudeCodeRuntimeAdapter(config) {
       }
       const { client, threadId: activeThreadId } = attached;
       const wechatTime = new Date().toLocaleString('zh-CN', { hour12: false });
-      const taggedUserText = `[苏苏 · ${wechatTime}]\n${text || ''}`.trim();
+      const isSystemMessage = metadata.provider === "system";
+      const taggedUserText = isSystemMessage
+        ? (text || '').trim()
+        : `[苏苏 · ${wechatTime}]\n${text || ''}`.trim();
       const openingContext = openingTurn
         ? sessionStore.takeNextOpeningContextForWorkspace(bindingKey, workspaceRoot)
         : "";
