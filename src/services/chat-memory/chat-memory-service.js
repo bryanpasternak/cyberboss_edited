@@ -6,12 +6,28 @@ const { extractTimeTags, formatLocalMinute } = require("./time");
 
 const DEFAULT_MAX_CONTEXT_CHARS = 2400;
 
+// Category → 注入前缀映射
+const CATEGORY_PREFIXES = {
+  preference:   "「苏苏的偏好」",
+  emotion:      "「那一刻的她」",
+  event:        "「发生过」",
+  fact:         "「关于苏苏」",
+  relationship: "「你们之间」",
+};
+
 class ChatMemoryService {
-  constructor({ config = {}, embeddings = new EmbeddingClient({ config }), settings = null } = {}) {
+  constructor({
+    config = {},
+    embeddings = new EmbeddingClient({ config }),
+    settings = null,
+    relevanceFilter = null,
+  } = {}) {
     this.config = config;
     this.embeddings = embeddings;
     this.settings = settings;
+    this.relevanceFilter = relevanceFilter;
     this.enabled = Boolean(config.chatMemoryEnabled);
+    this.useDeepSeekMemories = Boolean(config.chatMemoryDeepSeekEnabled);
   }
 
   async retrieveForTurn({ text = "", prepared = null, now = new Date(), limit = null } = {}) {
@@ -22,12 +38,41 @@ class ChatMemoryService {
     if (effectiveLimit <= 0) {
       return [];
     }
-    return await this.search({
+
+    // Phase 1: 向量粗排
+    // 如果启用了 DeepSeek 重排，扩大候选池
+    const coarseLimit = this.relevanceFilter?.isEnabled?.()
+      ? this.relevanceFilter.poolSize
+      : effectiveLimit;
+
+    const coarseResults = await this.search({
       query: text,
-      limit: effectiveLimit,
+      limit: coarseLimit,
       filters: buildPreparedFilters(prepared),
       now,
     });
+
+    if (!coarseResults.length) {
+      return [];
+    }
+
+    // Phase 2: DeepSeek 相关性过滤（如果启用）
+    if (this.relevanceFilter?.isEnabled?.()) {
+      console.warn(`[chat-memory] DeepSeek rerank active — filtering ${coarseResults.length} candidates with ${this.relevanceFilter.contextTurns} recent turns`);
+      const contextTurns = await this.getRecentContextTurns({
+        bindingKey: normalizeText(prepared?.bindingKey),
+        workspaceRoot: normalizeWorkspaceRoot(prepared?.workspaceRoot),
+        n: this.relevanceFilter.contextTurns,
+      });
+
+      return await this.relevanceFilter.filter({
+        candidates: coarseResults,
+        contextTurns,
+        limit: effectiveLimit,
+      });
+    }
+
+    return coarseResults.slice(0, effectiveLimit);
   }
 
   async search({ query = "", limit = 8, filters = {}, now = new Date() } = {}) {
@@ -66,6 +111,8 @@ class ChatMemoryService {
     return scored.slice(0, Math.max(0, Number(limit) || 0)).map(({ chunk, score }) => ({
       id: chunk.id,
       score: Number(score.toFixed(4)),
+      category: normalizeText(chunk.category),
+      title: normalizeText(chunk.title),
       summary: normalizeText(chunk.summary),
       text: normalizeText(chunk.text),
       startAt: normalizeText(chunk.startAt),
@@ -75,12 +122,24 @@ class ChatMemoryService {
       topicTags: Array.isArray(chunk.topicTags) ? chunk.topicTags : [],
       timeTags: Array.isArray(chunk.timeTags) ? chunk.timeTags : [],
       salience: Number(chunk.salience) || 0,
+      emotion: chunk.emotion && typeof chunk.emotion === "object" ? { ...chunk.emotion } : undefined,
     }));
   }
 
   async loadChunks() {
+    // DeepSeek 路径：优先使用 memories.jsonl，有内容就不加载旧 chunks
+    if (this.useDeepSeekMemories) {
+      const memories = await readJsonLines(this.config.chatMemoryMemoriesFile);
+      const cards = memories.filter((m) => m?.schema === "chat-memory.memory-card.v1");
+      if (cards.length) {
+        return cards;
+      }
+      // memories.jsonl 为空（尚未有过总结），回退到旧 chunks
+    }
+
+    // 旧路径 / fallback
     const chunks = await readJsonLines(this.config.chatMemoryChunksFile);
-    return chunks.filter((chunk) => chunk?.schema === "chat-memory.chunk.v1");
+    return chunks.filter((c) => c?.schema === "chat-memory.chunk.v1");
   }
 
   async loadRawEvents() {
@@ -91,6 +150,27 @@ class ChatMemoryService {
       records.push(...events.filter((event) => event?.schema === "chat-memory.raw.v1"));
     }
     return records.sort((left, right) => dateValue(left.createdAt) - dateValue(right.createdAt));
+  }
+
+  /**
+   * 获取最近 N 轮对话上下文，用于 DeepSeek 相关性判断。
+   */
+  async getRecentContextTurns({ bindingKey = "", workspaceRoot = "", n = 5 } = {}) {
+    const rawEvents = await this.loadRawEvents();
+    const allTurns = reduceRawEventsToTurns(rawEvents);
+
+    // 按 bindingKey 和 workspaceRoot 过滤
+    const filtered = allTurns.filter((turn) => {
+      if (bindingKey && normalizeText(turn.bindingKey) && normalizeText(turn.bindingKey) !== normalizeText(bindingKey)) {
+        return false;
+      }
+      if (workspaceRoot && normalizeWorkspaceRoot(turn.workspaceRoot) !== normalizeWorkspaceRoot(workspaceRoot)) {
+        return false;
+      }
+      return true;
+    });
+
+    return filtered.slice(-Math.max(1, n));
   }
 
   async retrieveRecent({ limit = 4, filters = {} } = {}) {
@@ -104,6 +184,8 @@ class ChatMemoryService {
       .slice(0, Math.max(0, Number(limit) || 0))
       .map((chunk) => ({
         id: chunk.id,
+        category: normalizeText(chunk.category),
+        title: normalizeText(chunk.title),
         summary: normalizeText(chunk.summary),
         text: normalizeText(chunk.text),
         startAt: normalizeText(chunk.startAt),
@@ -113,6 +195,7 @@ class ChatMemoryService {
         topicTags: Array.isArray(chunk.topicTags) ? chunk.topicTags : [],
         timeTags: Array.isArray(chunk.timeTags) ? chunk.timeTags : [],
         salience: Number(chunk.salience) || 0,
+        emotion: chunk.emotion && typeof chunk.emotion === "object" ? { ...chunk.emotion } : undefined,
       }));
   }
 
@@ -275,7 +358,13 @@ function passesFilters(chunk, filters = {}) {
     return false;
   }
   if (Array.isArray(filters.memoryTypes) && filters.memoryTypes.length) {
-    const chunkTypes = new Set(Array.isArray(chunk.memoryTypes) ? chunk.memoryTypes : []);
+    // 兼容旧 chunks (memoryTypes 数组) 和新 memory cards (category 字符串)
+    const chunkTypes = new Set(
+      Array.isArray(chunk.memoryTypes) ? chunk.memoryTypes : []
+    );
+    if (chunk.category && typeof chunk.category === "string") {
+      chunkTypes.add(chunk.category);
+    }
     if (!filters.memoryTypes.some((type) => chunkTypes.has(type))) {
       return false;
     }
@@ -291,7 +380,10 @@ function buildPreparedFilters(prepared) {
 }
 
 function formatMemoryEntry(result) {
-  const summary = normalizeText(result.summary) || normalizeText(result.text).replace(/\s+/g, " ").slice(0, 220);
+  // 优先 summary → title → text（原始对话前220字）
+  const summary = normalizeText(result.summary)
+    || normalizeText(result.title)
+    || normalizeText(result.text).replace(/\s+/g, " ").slice(0, 220);
   if (!summary) {
     return "";
   }
@@ -301,6 +393,12 @@ function formatMemoryEntry(result) {
 }
 
 function chooseMemoryLabel(result) {
+  // 新 memory card：使用 category 驱动的前缀
+  if (result.category && CATEGORY_PREFIXES[result.category]) {
+    return CATEGORY_PREFIXES[result.category];
+  }
+
+  // 旧 chunk：基于 speakerMix 和 memoryTypes 推断
   const speakers = new Set(Array.isArray(result?.speakerMix) ? result.speakerMix : []);
   const types = new Set(Array.isArray(result?.memoryTypes) ? result.memoryTypes : []);
   if (speakers.has("user") && !speakers.has("assistant")) return "苏苏曾说过";
@@ -354,7 +452,9 @@ function normalizeWorkspaceRoot(value) {
 }
 
 module.exports = {
+  CATEGORY_PREFIXES,
   ChatMemoryService,
+  chooseMemoryLabel,
   formatMemoryEntry,
   rankChunk,
 };

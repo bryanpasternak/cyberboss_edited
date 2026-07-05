@@ -166,7 +166,7 @@ class PromiseService {
     return archived;
   }
 
-  formatDueForInjection(promises = [], { title = "你想起你和苏苏之间还有一些约定：" } = {}) {
+  formatDueForInjection(promises = [], { title = "我和苏苏之间还有一些约定：" } = {}) {
     if (!Array.isArray(promises) || !promises.length) {
       return "";
     }
@@ -174,9 +174,9 @@ class PromiseService {
     for (const promise of promises) {
       const madeAt = formatLocalMinute(promise.madeAt);
       const dueAt = promise.dueAt ? `，说好了 ${formatLocalMinute(promise.dueAt)}` : "";
-      lines.push(`你答应过苏苏 ${madeAt}${dueAt}——${normalizeText(promise.text)}`.trim());
+      lines.push(`我答应过苏苏 ${madeAt}${dueAt}——${normalizeText(promise.text)}`.trim());
     }
-    lines.push("现在是兑现的时候了。请你判断这个约定是否应该兑现，自然地提起它或者暂时忽略它。");
+    lines.push("如果这个约定应该兑现，可以自然地提起它，否则暂时忽略它。");
     return lines.join("\n");
   }
 

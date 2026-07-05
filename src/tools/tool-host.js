@@ -160,7 +160,7 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_system_send",
-    description: "Queue an internal Cyberboss system trigger for the current bound workspace and chat.",
+    description: "Queue an internal Cyberboss system trigger for the current bound workspace and chat immediately.",
     shortHint: "Queue an internal system message for the current workspace.",
     topics: ["system"],
     inputSchema: {

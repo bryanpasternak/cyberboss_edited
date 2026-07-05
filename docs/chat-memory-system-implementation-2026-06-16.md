@@ -159,3 +159,123 @@ node --check 四个文件都过了。要不要我顺手在 docs/chat-memory-syst
 方式二：关闭整个 chat-memory
 
 设置 CYBERBOSS_CHAT_MEMORY_ENABLED=false 环境变量，这样 chatMemoryService.enabled 为 false，buildThreadRecap 会直接返回空字符串。
+
+---
+
+## DeepSeek 集成 (2026-07-04)
+
+### 改造目标
+
+在保持 raw events 实时采集不变的前提下，用 DeepSeek 替代/增强两个环节：
+1. **记忆压缩**：每 12 小时 (3:00 / 15:00) 由 DeepSeek 总结新对话为结构化记忆卡片
+2. **召回过滤**：检索时由 DeepSeek 判断候选记忆与当前 5 轮上下文是否相关
+
+### 新增文件
+
+- `src/services/chat-memory/deepseek-client.js`
+  - OpenAI-compatible chat/completions 客户端，封装 DeepSeek API
+  - 支持 JSON mode (`response_format: { type: "json_object" }`)
+  - 支持 undici fetch + HTTP 代理
+  - `structuredPrompt()` 便捷方法：发送 system+user prompt，自动解析返回 JSON
+
+- `src/services/chat-memory/deepseek-summarizer-service.js`
+  - 定时读取新 raw events，复用 `reduceRawEventsToTurns()` 归并为 turns
+  - 分批发送给 DeepSeek，每批控制在 6000 字符内
+  - 解析 DeepSeek 返回的 5 类记忆卡片：`preference` | `emotion` | `event` | `fact` | `relationship`
+  - 对每张卡片调用 `EmbeddingClient.embedText(title + summary)` 生成向量
+  - 写入 `memories.jsonl`，进度追踪写入 `summary-state.json`
+  - **Emotion 增强**：prompt 中要求 emotion 类型摘要必须包含具体情绪词（开心、感动、心疼、委屈、安心等），让文字带有情感温度
+
+- `src/services/chat-memory/deepseek-relevance-filter.js`
+  - 两阶段检索的第二阶段：向量粗排后，DeepSeek 判断候选记忆与最近 5 轮对话是否相关
+  - 超时 5s，失败自动回退到纯向量排序
+  - 如果 DeepSeek 判定全部不相关，回退到粗排结果（防止过于严格）
+
+### 修改文件
+
+- `src/core/config.js`
+  - 新增 14 项配置：DeepSeek API、cron 调度、总结参数、相关性过滤
+  - 新增 2 个存储路径：`chatMemoryMemoriesFile`、`chatMemorySummaryStateFile`
+  - 新增 `parseCronHours()` 辅助函数
+
+- `src/services/chat-memory/chat-memory-scheduler.js`
+  - 保留原有 idle 调度逻辑
+  - 新增 cron 调度：`calculateNextFireTime()` 计算下一个 3:00 或 15:00（上海时区）
+  - `processCronTrigger()` 调用 summarizer 或 chunker，然后安排下一次触发
+  - 进程启动时 force 处理遗漏日志
+
+- `src/services/chat-memory/chat-memory-service.js`
+  - 新增 `relevanceFilter` 注入
+  - `retrieveForTurn()` 改为两阶段：向量粗排 → DeepSeek 精排
+  - `loadChunks()` 合并 `memories.jsonl` + `chunks.jsonl` 两个数据源
+  - 新增 `getRecentContextTurns()` 获取最近 N 轮对话
+  - `formatMemoryEntry()` + `chooseMemoryLabel()` 支持 category 驱动的前缀
+  - 5 种注入前缀：`「苏苏的偏好」` `「那一刻的她」` `「发生过」` `「关于苏苏」` `「你们之间」`
+  - `search()` 返回新增 `category`、`title`、`emotion` 字段
+
+- `src/services/chat-memory/index.js`
+  - 按需创建 DeepSeekClient、DeepSeekSummarizer、DeepSeekRelevanceFilter
+  - summarizer 传入 scheduler，relevanceFilter 传入 memory service
+  - 所有新字段 additive，不影响原有 `.capture` `.scheduler` `.memory` `.promises` 接口
+
+### 新增存储
+
+```
+.cyberboss/chat-memory/
+  memories.jsonl        # DeepSeek 记忆卡片（与 chunks.jsonl 共存）
+  summary-state.json    # 总结进度追踪
+```
+
+### 记忆卡片格式 (memories.jsonl)
+
+```json
+{
+  "schema": "chat-memory.memory-card.v1",
+  "id": "mem_000042_a1b2c3d4",
+  "source": "deepseek-summary",
+  "category": "emotion",
+  "title": "她开心地笑了",
+  "summary": "那通电话里苏苏说了很多琐碎的事，她开心地笑了很多次，语气里带着被接住的安心。阿星听着，心里也软软的。",
+  "text": "[2026-07-04 12:01]\n[苏苏] 今天发生了一件特别好玩的事...\n[阿星] 说说看",
+  "speakerMix": ["user", "assistant"],
+  "salience": 0.65,
+  "emotion": { "valence": 0.7, "arousal": 0.5 },
+  "embedding": [0.001, -0.002, ...]
+}
+```
+
+### Category 驱动的注入格式
+
+| category | 前缀 | 用途 |
+|---|---|---|
+| `preference` | `「苏苏的偏好」` | 苏苏的偏好/习惯/边界 |
+| `emotion` | `「那一刻的她」` | 情绪记忆，摘要含具体情绪词 |
+| `event` | `「发生过」` | 事件、决定、完成的事 |
+| `fact` | `「关于苏苏」` | 事实信息、生活状态 |
+| `relationship` | `「你们之间」` | 关系进展、亲密时刻 |
+
+### 新增环境变量
+
+```
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_ENABLED=1
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_API_KEY=sk-xxx
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_MODEL=deepseek-chat
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_TIMEOUT_MS=30000
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_PROXY=
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_VERBOSE=0
+CYBERBOSS_CHAT_MEMORY_CRON_HOURS=3,15
+CYBERBOSS_CHAT_MEMORY_SUMMARY_MAX_TURNS_PER_BATCH=30
+CYBERBOSS_CHAT_MEMORY_SUMMARY_MAX_CHARS_PER_BATCH=6000
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_ENABLED=1
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_POOL_SIZE=20
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_CONTEXT_TURNS=5
+CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_TIMEOUT_MS=5000
+```
+
+### 关闭 DeepSeek 回退
+
+设置 `CYBERBOSS_CHAT_MEMORY_DEEPSEEK_ENABLED=false` 后：
+- summarizer 不创建，cron 调度回退到旧 chunker（idle 触发）
+- relevanceFilter 不创建，检索回退到纯向量排序
+- 系统行为完全恢复到 2026-06-16 版本

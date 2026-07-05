@@ -50,6 +50,7 @@ const {
   splitCommandLine,
 } = require("../adapters/runtime/shared/approval-command");
 const { runSystemCheckinPoller } = require("../app/system-checkin-poller");
+const { MidnightTrigger } = require("../app/midnight-trigger");
 const { createProjectTooling } = require("../tools/create-project-tooling");
 const { createChatMemoryRuntime } = require("../services/chat-memory");
 const DEFAULT_LONG_POLL_TIMEOUT_MS = 35_000;
@@ -130,6 +131,14 @@ class CyberbossApp {
     this.turnBoundaryScopeKeys = new Set();
     this.systemMessageDispatcher = null;
     this._activeReplyChannel = null;
+    this.midnightTrigger = new MidnightTrigger({
+      triggerFile: config.midnightTriggerFile,
+      systemMessageQueue: this.systemMessageQueue,
+      config,
+      accountId: "",
+      senderId: "",
+      workspaceRoot: "",
+    });
     this.streamDelivery = new StreamDelivery({
       channelAdapter: this.channelAdapter,
       channelRouter: this.channelRouter,
@@ -210,6 +219,7 @@ class CyberbossApp {
     }
     const weixinAccount = accountsByChannelId.get("weixin") || accountsByChannelId.values().next().value;
     this.activeAccountId = weixinAccount?.accountId || "";
+    this.midnightTrigger._accountId = this.activeAccountId;
     this.systemMessageDispatcher = new SystemMessageDispatcher({
       queueStore: this.systemMessageQueue,
       config: this.config,
@@ -271,6 +281,29 @@ class CyberbossApp {
     while (!shutdown.stopped) {
       try {
         if (isWeixinChannel && weixinAccount) {
+          // Resolve and update midnight trigger target
+          try {
+            const sessionStore = this.runtimeAdapter.getSessionStore();
+            const midnightSenderId = resolvePreferredSenderId({
+              config: this.config,
+              accountId: this.activeAccountId,
+              sessionStore,
+            });
+            const midnightWorkspace = resolvePreferredWorkspaceRoot({
+              config: this.config,
+              accountId: this.activeAccountId,
+              senderId: midnightSenderId,
+              sessionStore,
+            });
+            if (midnightSenderId && midnightWorkspace) {
+              this.midnightTrigger.updateTarget({
+                senderId: midnightSenderId,
+                workspaceRoot: midnightWorkspace,
+              });
+            }
+          } catch { /* target resolution can fail silently */ }
+          this.midnightTrigger.checkAndFire();
+
           await Promise.all([
             this.flushDueReminders(weixinAccount),
             this.flushDuePromises(weixinAccount),

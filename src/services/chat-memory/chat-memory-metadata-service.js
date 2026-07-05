@@ -30,7 +30,7 @@ function inferMemoryTypes(text) {
   if (/喜欢|偏好|讨厌|不要|别再|以后.*(要|不要)|习惯|边界/.test(text)) {
     types.add("preference");
   }
-  if (/记住|别忘|以后|约定|答应|承诺|今晚|明早|明天|下次|回头|改天/.test(text)) {
+  if (/今晚|明早/.test(text)) {
     types.add("promise_candidate");
   }
   if (/项目|代码|bug|测试|实现|命令|文件|接口|API|runtime|微信|telegram|Codex|Claude/i.test(text)) {

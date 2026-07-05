@@ -1,0 +1,3 @@
+（在这里写凌晨3点后触发 system trigger 时的话术。
+This file is read after 3 AM and sent as a system trigger to the model.
+Write your custom trigger text below this line.）

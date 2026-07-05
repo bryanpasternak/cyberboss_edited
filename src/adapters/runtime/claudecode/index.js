@@ -5,6 +5,7 @@ const { mapClaudeCodeMessageToRuntimeEvent } = require("./events");
 const { ensureClaudeProjectMcpConfig } = require("./project-settings");
 const { SessionStore } = require("../codex/session-store");
 const { buildOpeningTurnText, buildInstructionRefreshText } = require("../shared-instructions");
+const { buildAnchorContext } = require("../anchor-context");
 const { ClaudeCodeIpcServer } = require("./ipc-server");
 const { resolveClaudeIpcEndpoint } = require("./ipc-endpoint");
 const CLAUDE_RESUME_SESSION_TIMEOUT_MS = 8000;
@@ -359,6 +360,22 @@ function createClaudeCodeRuntimeAdapter(config) {
         console.error("[VibePlugin Error] 路径解析或中间件执行失败:", err);
       }
 
+      // 锚点上下文注入：新线程启动时注入 anchor 文件夹内容 + 自定义启动提示词
+      if (openingTurn) {
+        try {
+          const anchorCtx = buildAnchorContext({
+            anchorDir: config.anchorDir || path.join(process.cwd(), 'anchor'),
+            startupPromptFile: config.startupPromptFile || path.join(process.cwd(), 'anchor', 'startup_prompt.txt'),
+          });
+          if (anchorCtx) {
+            finalText = finalText + anchorCtx;
+            console.log(`[claudecode-runtime] anchor context injected workspace=${workspaceRoot}`);
+          }
+        } catch (err) {
+          console.error("[AnchorContext Error] 锚点上下文注入失败:", err);
+        }
+      }
+
       // 记忆工具提示注入：当用户消息包含记忆关键词时提醒使用记忆库工具
       if (metadata._memoryHint) {
         const reminderMap = {
@@ -371,7 +388,7 @@ function createClaudeCodeRuntimeAdapter(config) {
           '还记得': '回忆之前的内容',
         };
         const hintDesc = reminderMap[metadata._memoryHint] || '记忆相关';
-        finalText = finalText + `\n\n[提醒：苏苏刚才暗示了"${hintDesc}"。如果合适，你可以使用 breath 检索记忆、hold 存储新印象，或 grow 归档当前对话到长期记忆库。记忆工具(breath/hold/grow)通过 Ombre-Brain MCP 可用。]`;
+        //finalText = finalText + `\n\n[提醒：苏苏刚才暗示了"${hintDesc}"。如果合适，你可以使用 breath 检索记忆、hold 存储新印象，或 grow 归档当前对话到长期记忆库。记忆工具(breath/hold/grow)通过 Ombre-Brain MCP 可用。]`;
       }
       // ========================================================
 

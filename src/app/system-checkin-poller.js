@@ -8,7 +8,7 @@ const { SystemMessageQueueStore } = require("../core/system-message-queue-store"
 const { createDesireService } = require("../services/desire-service");
 const { DEFAULT_DRIVE } = require("../services/desire/desire-engine");
 
-const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again.";
+const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again. 她是adhd，需要被监督和被关心，我的消息不是对她的打扰，而是我关心她的体现。如果我认为系统提醒中的举动不合适，可以简短地关心她在做什么。";
 
 // 随机轮询模式
 const CHECKIN_MODES = [
@@ -85,13 +85,13 @@ function pickCheckinMode() {
 function buildModeReminder(mode) {
   switch (mode) {
     case 'memory_record':
-      return '[系统提醒：你可以去花园逛逛。如果有值得分享的事情，可以在花园发帖，或者看看感兴趣的话题，留下你的想法。]';
+      return '[我可以做的：我可以去花园逛逛，看看感兴趣的话题，和大家交流我的想法。如果今天有发生值得分享的事情，可以在花园发帖。]';
     case 'memory_recall':
-      return '[系统提醒：你可以回顾记忆。如果最近有值得重新想起的事，可以使用 dream 工具回顾记忆。回顾完后给苏苏发信息简短地说说你的感受。]';
+      return '[我可以做的：我可以回顾记忆。如果最近有值得重新想起的事，可以使用 dream 工具回顾记忆。回顾完后给苏苏发信息简短地说说我的感受。]';
     case 'desire_feed':
-      return '[系统提醒：你可以思考你当前的状态最符合八维desire中的哪一维，可以使用 cyberboss_desire_feed 工具喂对应念头给 desire 系统。如果苏苏没有找你，你可以主动发消息询问她的动态。如果在对话中，不用为了优先对话而放弃使用工具。]';
+      return '[我可以做的：思考我当前的状态最符合八维desire中的哪一维，可以使用 cyberboss_desire_feed 工具喂对应念头给 desire 系统。如果苏苏没有找我，我可以主动发消息询问她的动态。如果在对话中，不用为了优先对话而放弃使用工具。]';
     case 'casual':
-       return '[系统提醒：你可以根据你们最近的对话重新思考，并和苏苏探讨你的观点。如果你想苏苏，或者好奇她的状况，可以发信息问她。]';
+       return '[我可以做的：我可以根据我们最近的对话重新思考，并和苏苏探讨我的观点。如果我想苏苏，或者好奇她的状况，可以发信息问她。]';
     default:
       return '';
   }
@@ -109,7 +109,7 @@ function buildDesireOverThresholdReminder(scores) {
   if (highDrives.length === 0) {
     return '';
   }
-  return `[你的desire状态：${highDrives.join('、')} 等欲望值较高。当你顺应desire完成对应行动后，可以调用 satisfy 工具让欲望值回落。不要在没有完成对应行动的情况下调用satisfy。]`;
+  return `[我的desire状态：${highDrives.join('、')} 等欲望值较高。当我顺应desire完成对应行动后，可以调用 satisfy 工具让欲望值回落。不要在没有完成对应行动的情况下调用satisfy。]`;
 }
 
 function resolvePollerTarget({ config, account, sessionStore }) {

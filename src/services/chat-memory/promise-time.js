@@ -13,11 +13,11 @@ function parsePromiseDue(text = "", now = new Date()) {
     const due = withShanghaiTime(base, 20, 0, 0);
     return buildDueWindow("tonight", due, 30, 2359);
   }
-  if (/晚上/.test(normalized) && !hourMinuteCandidate(normalized)) {
-    const due = withShanghaiTime(base, 20, 0, 0);
-    return buildDueWindow("evening", due, 1800, 2359);
-  }
-  if (/明早|明天早上|明早上/.test(normalized)) {
+  // if (/晚上/.test(normalized) && !hourMinuteCandidate(normalized)) {
+  //   const due = withShanghaiTime(base, 20, 0, 0);
+  //   return buildDueWindow("evening", due, 1800, 2359);
+  // }
+  if (/明早|明早上/.test(normalized)) {
     const due = withShanghaiTime(addDaysShanghai(base, 1), 8, 0, 0);
     return buildDueWindow("tomorrow_morning", due, 630, 1030);
   }
@@ -26,32 +26,32 @@ function parsePromiseDue(text = "", now = new Date()) {
     return buildDueWindow("weekend", due, 1800, 2359);
   }
   const hourMinute = normalized.match(/(上午|下午|晚上|中午)?\s*(\d{1,2})点(?:(\d{1,2})分)?/);
-  if (hourMinute) {
-    const day = /明天|明日/.test(normalized) ? addDaysShanghai(base, 1) : base;
-    let hour = Number(hourMinute[2]);
-    const period = hourMinute[1] || "";
-    if (/下午|晚上/.test(period) && hour < 12) {
-      hour += 12;
-    }
-    if (/上午/.test(period) && hour === 12) {
-      hour = 0;
-    }
-    const minute = Number(hourMinute[3] || 0);
-    const due = withShanghaiTime(day, hour, minute, 0);
-    return buildExplicitDueWindow("explicit_time", due, 30);
-  }
-  if (/明天/.test(normalized)) {
-    const due = withShanghaiTime(addDaysShanghai(base, 1), 12, 0, 0);
-    return buildDueWindow("tomorrow", due, 930, 2230);
-  }
-  if (/下次/.test(normalized)) {
-    return {
-      dueType: "next_time",
-      dueAt: "",
-      dueWindowStartAt: "",
-      dueWindowEndAt: "",
-    };
-  }
+  // if (hourMinute) {
+  //   const day = /明天|明日/.test(normalized) ? addDaysShanghai(base, 1) : base;
+  //   let hour = Number(hourMinute[2]);
+  //   const period = hourMinute[1] || "";
+  //   if (/下午|晚上/.test(period) && hour < 12) {
+  //     hour += 12;
+  //   }
+  //   if (/上午/.test(period) && hour === 12) {
+  //     hour = 0;
+  //   }
+  //   const minute = Number(hourMinute[3] || 0);
+  //   const due = withShanghaiTime(day, hour, minute, 0);
+  //   return buildExplicitDueWindow("explicit_time", due, 30);
+  // }
+  // if (/明天/.test(normalized)) {
+  //   const due = withShanghaiTime(addDaysShanghai(base, 1), 12, 0, 0);
+  //   return buildDueWindow("tomorrow", due, 930, 2230);
+  // }
+  // if (/下次/.test(normalized)) {
+  //   return {
+  //     dueType: "next_time",
+  //     dueAt: "",
+  //     dueWindowStartAt: "",
+  //     dueWindowEndAt: "",
+  //   };
+  // }
   if (/回头|改天/.test(normalized)) {
     const due = addDaysShanghai(startOfShanghaiDay(base), 3);
     return buildDueWindow("later", due, 900, 2200);

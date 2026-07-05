@@ -49,6 +49,8 @@ function readConfig() {
     chatMemoryEmbeddingCacheFile: path.join(stateDir, "chat-memory", "embeddings-cache.jsonl"),
     chatMemoryConfigFile: path.join(stateDir, "chat-memory", "config.json"),
     chatMemoryProcessingLockFile: path.join(stateDir, "chat-memory", "processing-lock.json"),
+    chatMemoryMemoriesFile: path.join(stateDir, "chat-memory", "memories.jsonl"),
+    chatMemorySummaryStateFile: path.join(stateDir, "chat-memory", "summary-state.json"),
     promiseStoreFile: path.join(stateDir, "promises", "promises.json"),
     promiseArchiveFile: path.join(stateDir, "promises", "archive.jsonl"),
     chatMemoryEnabled: readBoolEnv("CYBERBOSS_CHAT_MEMORY_ENABLED"),
@@ -62,6 +64,20 @@ function readConfig() {
     chatMemoryEmbedBaseUrl: readTextEnv("CYBERBOSS_CHAT_MEMORY_EMBED_BASE_URL"),
     chatMemoryEmbedModel: readTextEnv("CYBERBOSS_CHAT_MEMORY_EMBED_MODEL") || "local-hashed-ngram-512",
     chatMemoryEmbedApiKey: readTextEnv("CYBERBOSS_CHAT_MEMORY_EMBED_API_KEY") || readTextEnv("DASHSCOPE_API_KEY") || readTextEnv("OPENAI_API_KEY"),
+    chatMemoryDeepSeekEnabled: readBoolEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_ENABLED"),
+    chatMemoryDeepSeekBaseUrl: readTextEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_BASE_URL") || "https://api.deepseek.com/v1",
+    chatMemoryDeepSeekApiKey: readTextEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_API_KEY"),
+    chatMemoryDeepSeekModel: readTextEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_MODEL") || "deepseek-chat",
+    chatMemoryDeepSeekTimeoutMs: readIntEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_TIMEOUT_MS") || 30000,
+    chatMemoryDeepSeekProxy: readTextEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_PROXY"),
+    chatMemoryDeepSeekVerbose: readBoolEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_VERBOSE"),
+    chatMemoryCronHours: parseCronHours(readTextEnv("CYBERBOSS_CHAT_MEMORY_CRON_HOURS") || "3,15"),
+    chatMemorySummaryMaxTurnsPerBatch: readIntEnv("CYBERBOSS_CHAT_MEMORY_SUMMARY_MAX_TURNS_PER_BATCH") || 30,
+    chatMemorySummaryMaxCharsPerBatch: readIntEnv("CYBERBOSS_CHAT_MEMORY_SUMMARY_MAX_CHARS_PER_BATCH") || 6000,
+    chatMemoryDeepSeekRerankEnabled: readOptionalBoolEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_ENABLED") !== false,
+    chatMemoryDeepSeekRerankPoolSize: readIntEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_POOL_SIZE") || 20,
+    chatMemoryDeepSeekRerankContextTurns: readIntEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_CONTEXT_TURNS") || 5,
+    chatMemoryDeepSeekRerankTimeoutMs: readIntEnv("CYBERBOSS_CHAT_MEMORY_DEEPSEEK_RERANK_TIMEOUT_MS") || 5000,
     promiseMemoryEnabled: readOptionalBoolEnv("CYBERBOSS_PROMISE_MEMORY_ENABLED") !== false,
     promisePassiveInjectEnabled: readOptionalBoolEnv("CYBERBOSS_PROMISE_PASSIVE_INJECT_ENABLED") !== false,
     promiseActiveTriggerEnabled: readBoolEnv("CYBERBOSS_PROMISE_ACTIVE_TRIGGER_ENABLED"),
@@ -88,6 +104,9 @@ function readConfig() {
     desirePanelPort: readIntEnv("CYBERBOSS_DESIRE_PANEL_PORT") || 8765,
     weixinInstructionsFile: path.join(stateDir, "weixin-instructions.md"),
     weixinOperationsFile: path.resolve(__dirname, "..", "..", "templates", "weixin-operations.md"),
+    startupPromptFile: resolveOptionalPath(readTextEnv("CYBERBOSS_STARTUP_PROMPT_FILE")) || path.join(process.cwd(), "anchor", "startup_prompt.txt"),
+    midnightTriggerFile: resolveOptionalPath(readTextEnv("CYBERBOSS_MIDNIGHT_TRIGGER_FILE")) || path.join(process.cwd(), "anchor", "midnight_trigger.txt"),
+    anchorDir: resolveOptionalPath(readTextEnv("CYBERBOSS_ANCHOR_DIR")) || path.join(process.cwd(), "anchor"),
     stickersDir: path.join(stateDir, "stickers"),
     stickerAssetsDir: path.join(stateDir, "stickers", "assets"),
     stickersIndexFile: path.join(stateDir, "stickers", "index.json"),
@@ -226,6 +245,17 @@ function resolveLocationServerEnabled({ mode, enabled }) {
   return false;
 }
 
+function parseCronHours(value) {
+  const raw = String(value || "");
+  const hours = raw
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => Number.parseInt(part, 10))
+    .filter((hour) => Number.isFinite(hour) && hour >= 0 && hour <= 23);
+  return hours.length ? hours : [3, 15];
+}
+
 function resolveEnabledChannels() {
   const explicit = readListEnv("CYBERBOSS_CHANNELS").map((id) => id.toLowerCase()).filter(Boolean);
   if (explicit.length) {
@@ -233,6 +263,14 @@ function resolveEnabledChannels() {
   }
   const single = (readTextEnv("CYBERBOSS_CHANNEL") || "weixin").toLowerCase();
   return [single];
+}
+
+function resolveOptionalPath(value) {
+  const normalized = typeof value === "string" ? value.trim() : "";
+  if (!normalized) {
+    return "";
+  }
+  return normalized;
 }
 
 module.exports = { readConfig };
