@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>语音通话测试</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; font-family: -apple-system, system-ui, sans-serif;
+         background: var(--tg-theme-bg-color, #17212b); color: var(--tg-theme-text-color, #fff);
+         display: flex; flex-direction: column; align-items: center; padding: 24px 16px; gap: 16px; }
+  h1 { font-size: 18px; margin: 4px 0; }
+  .hint { font-size: 13px; opacity: .6; text-align: center; }
+  button { border: none; border-radius: 12px; padding: 14px 20px; font-size: 16px; color: #fff;
+           background: var(--tg-theme-button-color, #3390ec); }
+  #talk { width: 200px; height: 200px; border-radius: 50%; font-size: 20px; margin: 8px;
+          background: #3390ec; transition: transform .1s, background .1s; touch-action: none; user-select: none; }
+  #talk.rec { background: #e0533d; transform: scale(1.06); }
+  #status { font-size: 15px; min-height: 22px; text-align: center; }
+  .box { width: 100%; max-width: 420px; background: rgba(255,255,255,.06); border-radius: 10px; padding: 10px 12px; font-size: 14px; }
+  .box b { opacity: .5; font-weight: normal; }
+  #log { width: 100%; max-width: 420px; height: 160px; overflow-y: auto; background: #000; color: #6f6;
+         font: 11px/1.5 monospace; padding: 8px; border-radius: 8px; white-space: pre-wrap; }
+  .row { display: flex; gap: 8px; }
+</style>
+</head>
+<body>
+  <h1>语音通话 · 最小测试</h1>
+  <p class="hint">先点「测麦克风」验证能录到音,再按住大按钮说话</p>
+
+  <div class="row">
+    <button id="mic">① 测麦克风</button>
+    <button id="clear">清日志</button>
+  </div>
+
+  <button id="talk">按住说话</button>
+  <div id="status">准备就绪</div>
+
+  <div class="box"><b>识别到:</b> <span id="heard">—</span></div>
+  <div class="box"><b>回复:</b> <span id="reply">—</span></div>
+  <div id="log"></div>
+
+<script>
+const tg = window.Telegram && window.Telegram.WebApp;
+if (tg) { tg.ready(); tg.expand(); }
+
+const $ = (id) => document.getElementById(id);
+const log = (m) => { const l = $('log'); l.textContent += m + '\n'; l.scrollTop = l.scrollHeight; };
+const setStatus = (m) => { $('status').textContent = m; };
+
+// 选一个当前浏览器支持的录音格式(iOS 多为 mp4,安卓/桌面多为 webm)
+function pickMime() {
+  const cands = ['audio/mp4', 'audio/webm;codecs=opus', 'audio/webm', 'audio/ogg'];
+  for (const c of cands) if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+  return '';
+}
+
+let stream = null;
+async function getMic() {
+  if (stream) return stream;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error('此 WebView 不支持 getUserMedia');
+  }
+  stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  log('✓ 麦克风已授权');
+  return stream;
+}
+
+// ① 纯客户端自测:录 2 秒立刻回放,证明 TG WebView 能录能放(不依赖后端)
+$('mic').onclick = async () => {
+  try {
+    setStatus('录音中(2秒)…');
+    const s = await getMic();
+    const mime = pickMime();
+    log('录音格式: ' + (mime || '(默认)'));
+    const rec = new MediaRecorder(s, mime ? { mimeType: mime } : undefined);
+    const parts = [];
+    rec.ondataavailable = (e) => parts.push(e.data);
+    rec.onstop = () => {
+      const blob = new Blob(parts, { type: mime || 'audio/webm' });
+      log('录到 ' + blob.size + ' 字节,回放…');
+      const a = new Audio(URL.createObjectURL(blob));
+      a.onended = () => setStatus('麦克风正常 ✓');
+      a.play().catch((e) => log('回放失败: ' + e.message));
+      setStatus('回放你的声音…');
+    };
+    rec.start();
+    setTimeout(() => rec.stop(), 2000);
+  } catch (e) { log('✗ ' + e.message); setStatus('麦克风失败'); }
+};
+
+$('clear').onclick = () => { $('log').textContent = ''; };
+
+// ② 按住说话 → 松开发到后端 → 播放 TTS
+let rec = null, parts = [], recMime = '';
+async function startTalk() {
+  try {
+    const s = await getMic();
+    recMime = pickMime();
+    rec = new MediaRecorder(s, recMime ? { mimeType: recMime } : undefined);
+    parts = [];
+    rec.ondataavailable = (e) => parts.push(e.data);
+    rec.onstop = sendTalk;
+    rec.start();
+    $('talk').classList.add('rec');
+    $('talk').textContent = '松开发送';
+    setStatus('录音中…');
+  } catch (e) { log('✗ ' + e.message); setStatus('无法录音'); }
+}
+function stopTalk() {
+  if (rec && rec.state !== 'inactive') rec.stop();
+  $('talk').classList.remove('rec');
+  $('talk').textContent = '按住说话';
+}
+async function sendTalk() {
+  const blob = new Blob(parts, { type: recMime || 'audio/webm' });
+  if (!blob.size) { setStatus('没录到声音'); return; }
+  setStatus('上传识别中…');
+  log('上传 ' + blob.size + ' 字节 (' + blob.type + ')');
+  try {
+    const t0 = performance.now();
+    const res = await fetch('/api/talk', { method: 'POST', headers: { 'Content-Type': blob.type }, body: blob });
+    const j = await res.json();
+    if (j.error) { log('✗ 后端: ' + j.error); setStatus('出错'); return; }
+    $('heard').textContent = j.heard;
+    $('reply').textContent = j.reply;
+    log('往返 ' + Math.round(performance.now() - t0) + 'ms');
+    if (j.timings) log('  └ STT ' + j.timings.stt + 'ms · 阿星 ' + j.timings.reply + 'ms · TTS ' + j.timings.tts + 'ms');
+    // 播放 TTS(在用户手势链路内,规避 iOS 自动播放限制)
+    const audio = new Audio('data:audio/' + (j.format || 'mp3') + ';base64,' + j.audio);
+    audio.onended = () => setStatus('准备就绪');
+    await audio.play();
+    setStatus('播放回复…');
+  } catch (e) { log('✗ ' + e.message); setStatus('网络错误'); }
+}
+
+const talk = $('talk');
+talk.addEventListener('pointerdown', (e) => { e.preventDefault(); startTalk(); });
+talk.addEventListener('pointerup', (e) => { e.preventDefault(); stopTalk(); });
+talk.addEventListener('pointercancel', stopTalk);
+
+log('页面加载完成');
+log('TG WebApp: ' + (tg ? tg.platform + ' v' + tg.version : '非 Telegram 环境(直接浏览器打开)'));
+</script>
+</body>
+</html>

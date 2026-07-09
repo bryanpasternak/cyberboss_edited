@@ -237,6 +237,19 @@ function createClaudeCodeRuntimeAdapter(config) {
       await client.sendUserMessage({ text: "/compact", threadId: activeThreadId });
       return { threadId: activeThreadId, turnId: client.pendingTurnId };
     },
+    async compactThreadWithInstructions({ threadId, workspaceRoot, instructions = "" }) {
+      const { client, threadId: activeThreadId } = await attachClientToThread(workspaceRoot, threadId);
+      const content = instructions
+        ? `${instructions.trim()}\n\n/compact`
+        : "/compact";
+      await client.sendUserMessage({ text: content, threadId: activeThreadId });
+      return { threadId: activeThreadId, turnId: client.pendingTurnId };
+    },
+    async sendSystemTurn({ threadId, workspaceRoot, text }) {
+      const { client, threadId: activeThreadId } = await attachClientToThread(workspaceRoot, threadId);
+      await client.sendUserMessage({ text, threadId: activeThreadId });
+      return { threadId: activeThreadId, turnId: client.pendingTurnId };
+    },
     async refreshThreadInstructions({ threadId, workspaceRoot, model = "" }) {
       const { client, threadId: activeThreadId } = await attachClientToThread(workspaceRoot, threadId);
       const refreshText = buildInstructionRefreshText(config);

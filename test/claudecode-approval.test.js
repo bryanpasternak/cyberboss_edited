@@ -544,6 +544,11 @@ test("handleCompactCommand invokes runtime compaction for the current thread", a
   const calls = [];
   const appLike = {
     pendingOperationByRunKey: new Map(),
+    autoCompactService: {
+      buildPreSavePrompt() { return "PRE_SAVE_PROMPT"; },
+      buildCompactInstructions() { return "COMPACT_INSTRUCTIONS"; },
+      buildPostReloadContext() { return "POST_RELOAD_CONTEXT"; },
+    },
     resolveWorkspaceRoot() {
       return "/workspace";
     },
@@ -553,8 +558,8 @@ test("handleCompactCommand invokes runtime compaction for the current thread", a
       },
     },
     runtimeAdapter: {
-      async compactThread(payload) {
-        calls.push(["compact", payload.threadId, payload.workspaceRoot, payload.model]);
+      async sendSystemTurn(payload) {
+        calls.push(["systemTurn", payload.threadId, payload.workspaceRoot, payload.text]);
         return { threadId: payload.threadId, turnId: "turn-1" };
       },
       getSessionStore() {
@@ -576,6 +581,10 @@ test("handleCompactCommand invokes runtime compaction for the current thread", a
         calls.push(["send", payload.text]);
       },
     },
+    get currentChannel() { return this.channelAdapter; },
+    async startCompactFlow(opts) {
+      return CyberbossApp.prototype.startCompactFlow.call(this, opts);
+    },
   };
 
   await CyberbossApp.prototype.handleCompactCommand.call(appLike, {
@@ -588,10 +597,11 @@ test("handleCompactCommand invokes runtime compaction for the current thread", a
 
   assert.deepEqual(calls, [
     ["queue", "thread-1", "user-1", "ctx-1", "weixin"],
-    ["compact", "thread-1", "/workspace", "claude-sonnet"],
-    ["send", "🗜️ Compact request sent\nthread: thread-1"],
+    ["systemTurn", "thread-1", "/workspace", "PRE_SAVE_PROMPT"],
+    ["send", "🗜️ Compact flow started (pre-save → compact → reload)\nthread: thread-1"],
   ]);
-  assert.equal(appLike.pendingOperationByRunKey.get("thread-1:turn-1")?.kind, "compact");
+  assert.equal(appLike.pendingOperationByRunKey.get("thread-1:turn-1")?.kind, "compactFlow");
+  assert.equal(appLike.pendingOperationByRunKey.get("thread-1:turn-1")?.phase, "preSave");
 });
 
 test("handleCompactCommand reports when there is no active thread", async () => {
@@ -617,6 +627,7 @@ test("handleCompactCommand reports when there is no active thread", async () => 
         calls.push(payload.text);
       },
     },
+    get currentChannel() { return this.channelAdapter; },
   };
 
   await CyberbossApp.prototype.handleCompactCommand.call(appLike, {
@@ -731,16 +742,24 @@ test("handleStopCommand allows stopping while waiting for approval", async () =>
   assert.equal(calls[1], "⏹️ Stop request sent\nthread: thread-1");
 });
 
-test("handleRuntimeEvent reports compact completion back to WeChat", async () => {
+test("handleRuntimeEvent reports compact flow completion back to WeChat", async () => {
   const sent = [];
   const appLike = {
     pendingOperationByRunKey: new Map([
       ["thread-1:turn-1", {
-        kind: "compact",
+        kind: "compactFlow",
+        phase: "postReload",
         userId: "user-1",
         contextToken: "ctx-1",
+        bindingKey: "binding-1",
+        workspaceRoot: "/workspace",
+        model: "claude-sonnet",
+        trigger: "manual",
       }],
     ]),
+    autoCompactService: {
+      recordCompact() {},
+    },
     streamDelivery: {
       async handleRuntimeEvent() {},
     },
@@ -760,12 +779,19 @@ test("handleRuntimeEvent reports compact completion back to WeChat", async () =>
         return false;
       },
     },
+    resolveChannelForSender() {
+      return null;
+    },
     hasPendingInboundMessage() {
       return false;
     },
     async flushPendingInboundMessages() {},
     async flushPendingSystemMessages() {},
     async stopTypingForThread() {},
+    async captureRuntimeTurnResult() {},
+    async advanceCompactPhase(opts) {
+      return CyberbossApp.prototype.advanceCompactPhase.call(this, opts);
+    },
     channelAdapter: {
       async sendText(payload) {
         sent.push(payload.text);
@@ -781,7 +807,7 @@ test("handleRuntimeEvent reports compact completion back to WeChat", async () =>
     },
   });
 
-  assert.deepEqual(sent, ["✅ Compact finished\nthread: thread-1"]);
+  assert.deepEqual(sent, ["✅ Compact complete\nthread: thread-1"]);
   assert.equal(appLike.pendingOperationByRunKey.size, 0);
 });
 test("handleRuntimeEvent auto-approves built-in view_image approvals without prompting", async () => {

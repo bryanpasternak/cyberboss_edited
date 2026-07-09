@@ -31,6 +31,7 @@ const { CheckinConfigStore, parseCheckinRangeMinutes, resolveDefaultCheckinRange
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("./default-targets");
 const { StreamDelivery } = require("./stream-delivery");
 const { ThreadStateStore } = require("./thread-state-store");
+const { AutoCompactService } = require("./auto-compact-service");
 const { DeferredSystemReplyStore } = require("./deferred-system-reply-store");
 const { SystemMessageQueueStore } = require("./system-message-queue-store");
 const { SystemMessageDispatcher } = require("./system-message-dispatcher");
@@ -147,6 +148,7 @@ class CyberbossApp {
       onDeferredSystemReply: (payload) => this.deferSystemReply(payload),
     });
     this.pendingOperationByRunKey = new Map();
+    this.autoCompactService = new AutoCompactService({ config });
     this.pendingDesireActionByRunKey = new Map();
     this._aiReplyTextAccumulator = new Map();
     this._chatMemoryReplyAccumulator = new Map();
@@ -1720,23 +1722,20 @@ class CyberbossApp {
         contextToken: normalized.contextToken,
         provider: normalized.provider,
       });
-      await this.runtimeAdapter.compactThread({
-        threadId,
+      const model = sessionStore.getRuntimeParamsForWorkspace(bindingKey, workspaceRoot).model;
+      await this.startCompactFlow({
+        phase: "preSave",
+        bindingKey,
         workspaceRoot,
-        model: sessionStore.getRuntimeParamsForWorkspace(bindingKey, workspaceRoot).model,
-      }).then((result) => {
-        const compactTurnId = normalizeCommandArgument(result?.turnId);
-        if (compactTurnId) {
-          this.pendingOperationByRunKey.set(buildRunKey(threadId, compactTurnId), {
-            kind: "compact",
-            userId: normalized.senderId,
-            contextToken: normalized.contextToken,
-          });
-        }
+        userId: normalized.senderId,
+        model,
+        threadId,
+        contextToken: normalized.contextToken,
+        trigger: "manual",
       });
       await this.currentChannel.sendText({
         userId: normalized.senderId,
-        text: `🗜️ Compact request sent\nthread: ${threadId}`,
+        text: `🗜️ Compact flow started (pre-save → compact → reload)\nthread: ${threadId}`,
         contextToken: normalized.contextToken,
       });
     } catch (error) {
@@ -1746,6 +1745,122 @@ class CyberbossApp {
         contextToken: normalized.contextToken,
       }).catch(() => {});
     }
+  }
+
+  async tryAutoCompact({ threadId, bindingKey, workspaceRoot, userId, model, contextToken }) {
+    const threadState = this.threadStateStore.getThreadState(threadId);
+    const currentTokens = Number(threadState?.context?.currentTokens);
+    const scopeKey = buildScopeKey(bindingKey, workspaceRoot);
+    if (!this.autoCompactService.shouldTrigger({ currentTokens, scopeKey })) {
+      return false;
+    }
+    const compactChannel = this.resolveChannelForSender(userId) || this.channelAdapter;
+    const statusLine = formatContextStatusLine({
+      runtimeName: "claudecode",
+      context: threadState?.context,
+      claudeContextWindow: this.config.claudeContextWindow,
+      claudeMaxOutputTokens: this.config.claudeMaxOutputTokens,
+    });
+    await compactChannel.sendText({
+      userId,
+      text: `🗜️ Auto-compact triggered\n${statusLine}`,
+      contextToken,
+    }).catch(() => {});
+    await this.startCompactFlow({
+      phase: "preSave",
+      bindingKey,
+      workspaceRoot,
+      userId,
+      model,
+      threadId,
+      contextToken,
+      trigger: "auto",
+    });
+    return true;
+  }
+
+  async startCompactFlow({ phase, bindingKey, workspaceRoot, userId, model, threadId, contextToken, trigger }) {
+    const service = this.autoCompactService;
+    let text;
+    switch (phase) {
+      case "preSave":
+        text = service.buildPreSavePrompt();
+        break;
+      case "compact":
+        text = service.buildCompactInstructions();
+        break;
+      case "postReload":
+        text = service.buildPostReloadContext();
+        break;
+      default:
+        return;
+    }
+
+    let result;
+    if (phase === "compact") {
+      result = await this.runtimeAdapter.compactThreadWithInstructions({
+        threadId,
+        workspaceRoot,
+        instructions: text,
+      });
+    } else {
+      result = await this.runtimeAdapter.sendSystemTurn({
+        threadId,
+        workspaceRoot,
+        text,
+      });
+    }
+
+    const turnId = normalizeCommandArgument(result?.turnId);
+    if (turnId) {
+      this.pendingOperationByRunKey.set(buildRunKey(threadId, turnId), {
+        kind: "compactFlow",
+        phase,
+        userId,
+        contextToken,
+        bindingKey,
+        workspaceRoot,
+        model,
+        trigger,
+      });
+    }
+  }
+
+  async advanceCompactPhase({ pendingOperation, threadId }) {
+    const currentPhase = pendingOperation.phase;
+    const nextPhaseMap = {
+      preSave: "compact",
+      compact: "postReload",
+      postReload: null,
+    };
+    const nextPhase = nextPhaseMap[currentPhase];
+    if (!nextPhase) {
+      // Flow complete
+      const scopeKey = pendingOperation.bindingKey && pendingOperation.workspaceRoot
+        ? buildScopeKey(pendingOperation.bindingKey, pendingOperation.workspaceRoot)
+        : "";
+      this.autoCompactService.recordCompact(scopeKey);
+      const compactChannel = this.resolveChannelForSender(pendingOperation.userId) || this.channelAdapter;
+      const label = pendingOperation.trigger === "auto" ? "Auto-compact" : "Compact";
+      await compactChannel.sendText({
+        userId: pendingOperation.userId,
+        text: `✅ ${label} complete\nthread: ${threadId}`,
+        contextToken: pendingOperation.contextToken,
+      }).catch(() => {});
+      return null;
+    }
+
+    await this.startCompactFlow({
+      phase: nextPhase,
+      bindingKey: pendingOperation.bindingKey,
+      workspaceRoot: pendingOperation.workspaceRoot,
+      userId: pendingOperation.userId,
+      model: pendingOperation.model,
+      threadId,
+      contextToken: pendingOperation.contextToken,
+      trigger: pendingOperation.trigger,
+    });
+    return nextPhase;
   }
 
   async handleSwitchCommand(normalized, command) {
@@ -2365,6 +2480,24 @@ class CyberbossApp {
           await this.flushPendingInboundMessages();
         }
         await this.flushPendingSystemMessages();
+        // Compact flow — 3-phase: preSave → compact → postReload
+        if (pendingOperation?.kind === "compactFlow") {
+          if (event.type === "runtime.turn.completed") {
+            await this.advanceCompactPhase({
+              pendingOperation,
+              threadId: event.payload.threadId,
+            });
+          } else if (event.type === "runtime.turn.failed") {
+            const compactChannel = this.resolveChannelForSender(pendingOperation.userId) || this.channelAdapter;
+            const label = pendingOperation.trigger === "auto" ? "Auto-compact" : "Compact";
+            await compactChannel.sendText({
+              userId: pendingOperation.userId,
+              text: `❌ ${label} failed at phase "${pendingOperation.phase}"\nthread: ${event.payload.threadId}`,
+              contextToken: pendingOperation.contextToken,
+            }).catch(() => {});
+          }
+        }
+        // Legacy compact completion (backward compat)
         if (pendingOperation?.kind === "compact" && event.type === "runtime.turn.completed") {
           const compactChannel = this.resolveChannelForSender(pendingOperation.userId) || this.channelAdapter;
           await compactChannel.sendText({
@@ -2372,6 +2505,20 @@ class CyberbossApp {
             text: `✅ Compact finished\nthread: ${event.payload.threadId}`,
             contextToken: pendingOperation.contextToken,
           }).catch(() => {});
+        }
+        // Auto-compact trigger: check after a normal turn completes
+        if (!pendingOperation?.kind && event.type === "runtime.turn.completed") {
+          if (linked?.bindingKey && linked?.workspaceRoot) {
+            const binding = sessionStore.getBinding(linked.bindingKey);
+            await this.tryAutoCompact({
+              threadId: event.payload.threadId,
+              bindingKey: linked.bindingKey,
+              workspaceRoot: linked.workspaceRoot,
+              userId: normalizeText(binding?.senderId),
+              model: sessionStore.getRuntimeParamsForWorkspace(linked.bindingKey, linked.workspaceRoot).model,
+              contextToken: "",
+            });
+          }
         }
         const shouldKeepTyping = linked?.bindingKey && linked?.workspaceRoot
           ? (

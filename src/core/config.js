@@ -152,6 +152,9 @@ function readConfig() {
     claudePermissionMode: readTextEnv("CYBERBOSS_CLAUDE_PERMISSION_MODE") || "default",
     claudeDisableVerbose: readBoolEnv("CYBERBOSS_CLAUDE_DISABLE_VERBOSE"),
     claudeExtraArgs: readListEnv("CYBERBOSS_CLAUDE_EXTRA_ARGS"),
+    autoCompactEnabled: readBoolEnv("CYBERBOSS_AUTO_COMPACT_ENABLED"),
+    autoCompactThresholdTokens: readIntEnv("CYBERBOSS_AUTO_COMPACT_THRESHOLD_TOKENS") || 300_000,
+    autoCompactCooldownMs: readIntEnv("CYBERBOSS_AUTO_COMPACT_COOLDOWN_MS") || 3_600_000,
     sessionsFile: path.join(stateDir, "sessions.json"),
     startWithCheckin: (mode === "start" && hasArgFlag(argv, "--checkin")) || readBoolEnv("CYBERBOSS_ENABLE_CHECKIN"),
   };
