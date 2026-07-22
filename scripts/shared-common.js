@@ -112,8 +112,11 @@ function spawnDetachedCommand(command, args, { logFile, cwd = rootDir, env = {} 
     cwd,
     env: { ...process.env, ...env },
     detached: true,
+    windowsHide: true,
     stdio: ["ignore", stdoutFd, stderrFd],
-    shell: process.platform === "win32",
+    // Native executables accept the MCP TOML arguments verbatim. Routing them
+    // through cmd.exe strips/rewrites their embedded quotes on Windows.
+    shell: process.platform === "win32" && !/\.exe$/i.test(command),
   });
   child.unref();
   return child.pid;

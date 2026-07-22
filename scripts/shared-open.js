@@ -18,7 +18,8 @@ async function main() {
   if (runtime === "codex") {
     await ensureSharedAppServer();
     const { threadId, workspaceRoot: resolvedWorkspaceRoot } = resolveBoundThread(workspaceRoot);
-    const child = spawn(process.env.CYBERBOSS_CODEX_COMMAND || "codex", [
+    const codexCommand = process.env.CYBERBOSS_CODEX_COMMAND || "codex";
+    const child = spawn(codexCommand, [
       "resume",
       threadId,
       "--remote",
@@ -28,7 +29,7 @@ async function main() {
       ...process.argv.slice(2),
     ], {
       stdio: "inherit",
-      shell: process.platform === "win32",
+      shell: process.platform === "win32" && !/\.exe$/i.test(codexCommand),
     });
 
     child.on("exit", (code, signal) => {

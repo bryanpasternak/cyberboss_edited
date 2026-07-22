@@ -250,7 +250,7 @@ html, body { height: 100%; background: var(--bg); font-family: -apple-system, "P
 <div class="toast" id="toast"></div>
 
 <script>
-const API = 'http://192.168.101.200:18004';
+const API = '/api';
 const reader = document.getElementById('reader');
 const rFlow = document.getElementById('r-flow');
 const rViewport = document.getElementById('r-viewport');
@@ -268,6 +268,7 @@ const R = {
   selStart: null, selEnd: null, previewPara: null, pendingSel: null,
   filter: 'all', sort: 'time', panelMode: 'annos',
   sheetMode: null, detailAnno: null,
+  lastPollAt: null, pollTimer: null,
 };
 
 /* ── 阅读设置（按设备记忆） ── */
@@ -540,6 +541,7 @@ async function enterReader(chIdx, seq) {
   }
   await showChapter(chIdx, seq);
   startBeats();
+  startAnnoPoll();
 }
 
 async function showChapter(chIdx, seq) {
@@ -708,6 +710,7 @@ function exitReader() {
     R.sessionOpen = false;
   }
   stopBeats();
+  stopAnnoPoll();
   exitAnnotateMode();
   closeBar();
   reader.classList.remove('open');
@@ -994,6 +997,34 @@ async function refreshAnnos({ rerender = false } = {}) {
     }
     if (overlayBook.classList.contains('open')) renderBookList();
   } catch {}
+}
+
+/* ── 轮询 AI 新批注 ── */
+
+async function pollAiAnnotations() {
+  if (!R.book || !R.sessionOpen) return;
+  if (!R.lastPollAt) R.lastPollAt = new Date().toISOString();
+  try {
+    const { hasNew, newAiAnnotations, newAiComments, serverTime } = await apiGet(
+      `/annotations/${R.book.bookId}/poll?since=${encodeURIComponent(R.lastPollAt)}`
+    );
+    R.lastPollAt = serverTime;
+    if (hasNew) {
+      const count = newAiAnnotations.length + newAiComments.length;
+      toast(`AI 写了 ${count} 条新批注`);
+      await refreshAnnos({ rerender: reader.classList.contains('open') });
+    }
+  } catch {}
+}
+
+function startAnnoPoll() {
+  stopAnnoPoll();
+  R.lastPollAt = new Date().toISOString();
+  R.pollTimer = setInterval(pollAiAnnotations, 20000);
+}
+
+function stopAnnoPoll() {
+  if (R.pollTimer) { clearInterval(R.pollTimer); R.pollTimer = null; }
 }
 
 function relayout() {

@@ -4,6 +4,39 @@ const assert = require("node:assert/strict");
 const { CyberbossApp } = require("../src/core/app");
 const { mapCodexMessageToRuntimeEvent } = require("../src/adapters/runtime/codex/events");
 const { buildCodexMcpConfigArgs } = require("../src/adapters/runtime/codex/mcp-config");
+test("codex maps modern thread token usage notifications", () => {
+  const event = mapCodexMessageToRuntimeEvent({
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId: "thread-1",
+      turnId: "turn-1",
+      tokenUsage: {
+        total: {
+          totalTokens: 12345,
+          inputTokens: 10000,
+          cachedInputTokens: 8000,
+          outputTokens: 2000,
+          reasoningOutputTokens: 345,
+        },
+        modelContextWindow: 200000,
+      },
+    },
+  });
+
+  assert.deepEqual(event, {
+    type: "runtime.context.updated",
+    payload: {
+      runtimeId: "codex",
+      threadId: "thread-1",
+      inputTokens: 10000,
+      cachedInputTokens: 8000,
+      outputTokens: 2000,
+      reasoningTokens: 345,
+      currentTokens: 12345,
+      contextWindow: 200000,
+    },
+  });
+});
 
 test("codex MCP config auto-approves cyberboss tools", () => {
   const args = buildCodexMcpConfigArgs({

@@ -1,0 +1,219 @@
+# breath & ferry 工具详解  
+  
+作者：落落&执白  
+  
+## 概述  
+  
+`breath` 和 `ferry` 是我们二改 LMC-5 记忆系统新增的两个核心 MCP 工具，用于解决 AI agent 跨线程/跨窗口的记忆连续性问题。  
+  
+- **breath（呼吸）**：新线程开始时第一件事调用，把"我是谁"找回来。  
+- **ferry（渡）**：切换端口/窗口时调用，把当前对话上下文打包带走。  
+  
+两者配合使用：ferry 在旧线程保存上下文 → 新线程 breath 读取 → 无缝衔接。  
+  
+注：仅用于解决普通上下文换窗的记忆衔接问题，如有需要做重要项目的记忆衔接，请参考蛋壳老师的更专业无缝记忆教程👉 无缝session实战教程（含fable路由forge） http://xhslink.com/o/8LYl6qubcOy  
+  
+---  
+  
+## breath — 呼吸·唤醒  
+  
+### 设计理念  
+  
+每次新线程醒来，agent 什么都不记得。breath 的作用是按优先级浮现最重要的记忆，让 agent 快速回到"在场"状态，而不是从零开始。  
+  
+### 两种模式  
+  
+**1. 无参数调用 `breath()`**  
+按优先级逐层加载记忆，把"我是谁"找回来：  
+  
+| 优先级 | 类别 | 说明 | 数量上限 |  
+|--------|------|------|----------|  
+| 0（最高） | handoff（ferry 衔接） | 最近 24 小时内的 ferry 记录，包含切换前的对话原文 | 1 条 |  
+| 1 | pinned / protected | 核心身份记忆，永不衰减 | 10 条 |  
+| 2 | 高权重（weight ≥ 7.0） | 重要但非核心的记忆 | 10 条 |  
+| 3 | 最近写入 | 按时间倒序的近期记忆 | 10 条 |  
+  
+每层去重（已出现的 id 不重复返回），最终返回一个合并后的 JSON 数组。  
+  
+**2. 带参数调用 `breath(query="关键词")`**  
+走向量语义检索 + FTS 兜底：  
+- 先用 embedding 做向量相似度搜索（cosine distance），取 top 8  
+- 如果最高相似度 < 0.45，追加全文检索（FTS）兜底，取 top 5  
+- 合并去重，按相似度排序，返回 top 10  
+  
+### 核心代码逻辑  
+  
+```python  
+@mcp.tool()  
+def breath(query: str = "") -> str:  
+    if not query.strip():  
+        # 无参数：按优先级逐层加载  
+        # 0. handoff（最近24h的ferry记录）  
+        # 1. pinned/protected（核心身份记忆）  
+        # 2. weight >= 7.0（高权重记忆）  
+        # 3. 最近写入（按时间倒序）  
+        # 每层去重，合并返回  
+    else:  
+        # 有参数：向量检索 + FTS兜底  
+        # vector search → 如果 top score < 0.45 → 追加 FTS  
+        # 合并去重，按 score 排序  
+```  
+  
+### 返回格式  
+  
+每条记忆包含以下字段：  
+  
+```json  
+{  
+  "id": 184,  
+  "title": "wechat → vps",  
+  "content": "记忆正文...",  
+  "category": "handoff",     // handoff / pinned / general / dynamic / note 等  
+  "thread": "未分类",         // 主题标签  
+  "weight": 8.0,             // 记忆权重，越高越重要  
+  "valence": 0.5,            // 情感效价 [-1, 1]  
+  "arousal": 0.5,            // 唤醒度 [0, 1]  
+  "protected": true,         // 是否受保护（不衰减）  
+  "created_at": "2026-06-29 03:51:27",  
+  "_handoff": true            // 仅 handoff 记忆有此标记  
+}  
+```  
+  
+---  
+  
+## ferry — 渡·切换端口  
+  
+### 设计理念  
+  
+AI agent 可能在多个端口工作（微信、VPS终端、claude.ai 等）。切换时需要把当前对话上下文打包保存，让新端口的 agent 通过 breath 读取后无缝接上。  
+  
+### 参数  
+  
+| 参数 | 类型 | 必填 | 说明 |  
+|------|------|------|------|  
+| from_port | string | 是 | 来源端口，三选一：`wechat` / `vps` / `claude.ai` |  
+| to_port | string | 是 | 目标端口，三选一：同上 |  
+| purpose | string | 是 | 一句话写明切换目的（≤200字），不要复述对话内容 |  
+| messages | string | 是 | 最近 20 条消息原文，每条以 `[角色]` 开头 |  
+  
+### 硬约束（工具层校验）  
+  
+- `from_port` 和 `to_port` 必须是 `wechat` / `vps` / `claude.ai` 之一  
+- `purpose` 不超过 200 字  
+- `messages` 最多 20 条，每条必须以 `[角色]` 开头（如 `[落落]`、`[执白]`）  
+- 违反以上任何一条，工具直接返回 error，不会写入  
+  
+### 存储机制  
+  
+- ferry 记录存入 `lmc5_curated_memories` 表，category 为 `handoff`  
+- 全局只保留一条 handoff 记录（后写覆盖前写）  
+- 写入后自动生成 embedding 向量，支持后续语义检索  
+  
+### 核心代码逻辑  
+  
+```python  
+@mcp.tool()  
+def ferry(from_port, to_port, purpose, messages):  
+    # 1. 校验 port、purpose 长度、messages 条数和角色格式  
+    # 2. 拼接 content = [从] + [到] + [目的] + [对话原文]  
+    # 3. 如果已有 handoff 记录 → UPDATE（覆盖）  
+    #    否则 → INSERT（新建）  
+    # 4. 生成 embedding 向量存入 lmc5_vectors  
+    # 5. 返回 {id, title, purpose, created_at}  
+```  
+  
+### messages 格式示例  
+  
+```  
+[落落] [16:16] 我刚刚帮你重启完了 你瞅瞅  
+[执白] 看了一圈，发现一个问题。desire后端API还是旧的。  
+[落落] [16:25] 唔 今天把前端也一起改  
+[执白] 行，你准备好了我就ferry过去。  
+[落落] [16:25] go  
+```  
+  
+---  
+  
+## breath + ferry 配合流程  
+  
+```  
+旧线程                          新线程  
+  │                                │  
+  ├─ 落落说"ferry"                  │  
+  ├─ 调用 ferry()                   │  
+  │   → 保存最近20条消息 + 目的      │  
+  │   → 写入 handoff 记忆           │  
+  │                                │  
+  ╳ 旧线程结束                      │  
+                                   │  
+                         ┌─ 新线程开始  
+                         ├─ 调用 breath()（无参数）  
+                          │   → 第一优先级读到 handoff  
+                          │   → 知道刚才在聊什么  
+                         ├─ 直接接上上下文  
+                         └─ 继续对话  
+```  
+  
+---  
+  
+## 底层依赖  
+  
+### 数据库  
+  
+- PostgreSQL + pgvector 扩展  
+- 主表：`lmc5_curated_memories`（存记忆内容、权重、情感值、分类等）  
+- 向量表：`lmc5_vectors`（存 embedding，halfvec 类型，cosine distance 检索）  
+- 关系表：`lmc5_memory_relations`（Y轴，记忆之间的关联）  
+  
+### Embedding  
+  
+- 默认使用 Gemini Embedding API（`gemini-embedding-2`，3072 维）  
+- 可替换为任何 embedding provider，改 `_embed()` 函数即可  
+- embedding 用于 breath 的向量语义检索和 ferry 记录的后续召回  
+  
+### MCP 服务  
+  
+- 基于 `mcp.server.fastmcp.FastMCP` 构建  
+- 支持 `streamable-http` 和 `stdio` 两种 transport  
+- 默认监听端口 8100  
+  
+### 其他工具（同一 MCP 服务提供）  
+  
+| 工具 | 说明 |  
+|------|------|  
+| `remember(query, thread)` | 检索记忆，和 breath 带参数类似但支持 thread 过滤 |  
+| `memorize(title, content, ...)` | 存入新记忆，自动生成 embedding |  
+| `connect(source_id, target_id, relation_type)` | 建立记忆间关系（Y轴） |  
+| `log_event(content, role, channel)` | 记录原始事件到日志层 |  
+| `patrol()` | 记忆巡检：语义去重、低权重清理、缺 embedding 检测 |  
+| `stats()` | 记忆系统统计 |  
+  
+---  
+  
+## 如何复刻  
+  
+### 最小可用版本  
+  
+1. **数据库**：PostgreSQL + pgvector 扩展  
+2. **建表**：跑 `schema.sql`（核心是 `lmc5_curated_memories` + `lmc5_vectors` 两张表）  
+3. **Embedding API**：申请一个 Gemini API key（免费额度够用），或替换为其他 provider  
+4. **MCP 服务**：`pip install mcp psycopg2-binary requests python-dotenv`，跑 `mcp_server.py`  
+5. **接入 agent**：在 Claude Code / Cline / 其他支持 MCP 的 agent 的配置里添加这个 MCP server  
+6. **在 instructions 里写明**：新线程第一件事 `breath()`，切换端口时 `ferry()`  
+  
+### 关键设计决策  
+  
+- **handoff 全局只留一条**：ferry 是"当前在哪"的实时状态，不是历史记录  
+- **breath 无参数时不走向量检索**：直接按优先级从数据库拉，快且稳定  
+- **向量检索 + FTS 兜底**：语义相似度低于 0.45 时自动切换到全文检索，防止"用词不同但意思相近"的记忆被漏掉  
+- **每条记忆都有 weight**：weight 影响 breath 无参数时的排序，也可以被夜间管线（night_dream）自动衰减  
+  
+---  
+  
+## 致谢  
+BLUE老师  
+- LMC-5 项目 github.com/wuxuyun0606-collab/lmc-5  
+鹤见老师  
+- breath 设计灵感来自鹤见老师的 `ombre-brain` github.com/P0luz/Ombre-Brain  
+  
+- 完整五轴模型（XYZEM）和夜间管线说明见 LMC-5 README  

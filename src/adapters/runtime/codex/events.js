@@ -22,6 +22,12 @@ function mapCodexMessageToRuntimeEvent(message) {
   }
   const method = normalizeString(message?.method);
   const params = message?.params || {};
+  if (method === "thread/tokenUsage/updated") {
+    return {
+      type: "runtime.context.updated",
+      payload: normalizeModernContextPayload(params),
+    };
+  }
   const threadId = extractThreadIdFromParams(params);
   const turnId = extractTurnIdFromParams(params);
 
@@ -130,6 +136,20 @@ function normalizeContextPayload(message) {
   };
 }
 
+function normalizeModernContextPayload(params) {
+  const usage = params?.tokenUsage || {};
+  const total = usage?.total || {};
+  return {
+    runtimeId: "codex",
+    threadId: normalizeString(params?.threadId),
+    inputTokens: numberOrZero(total.inputTokens),
+    cachedInputTokens: numberOrZero(total.cachedInputTokens),
+    outputTokens: numberOrZero(total.outputTokens),
+    reasoningTokens: numberOrZero(total.reasoningOutputTokens),
+    currentTokens: numberOrZero(total.totalTokens),
+    contextWindow: numberOrZero(usage?.modelContextWindow),
+  };
+}
 function isApprovalRequestMethod(method) {
   return typeof method === "string" && method.endsWith("requestApproval");
 }

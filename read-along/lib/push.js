@@ -9,7 +9,7 @@ const OUTBOX_LOG = path.join(__dirname, "..", "data", "outbox.log");
 // 2. 设了 READING_PUSH_ENABLED=1 → 写 cyberboss 系统消息队列
 // 3. 都没设                       → DRY-RUN，只写日志不外发
 const WEBHOOK = process.env.READING_PUSH_WEBHOOK || "";
-const CYBERBOSS_STATE_DIR = process.env.CYBERBOSS_STATE_DIR || path.join(process.env.HOME || "/root", ".cyberboss");
+const CYBERBOSS_STATE_DIR = process.env.CYBERBOSS_STATE_DIR || path.join(process.env.HOME || process.env.USERPROFILE || "/root", ".cyberboss");
 const QUEUE_FILE = path.join(CYBERBOSS_STATE_DIR, "system-message-queue.json");
 const SESSIONS_FILE = path.join(CYBERBOSS_STATE_DIR, "sessions.json");
 const PUSH_ENABLED = Boolean(WEBHOOK) || process.env.READING_PUSH_ENABLED === "1";

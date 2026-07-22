@@ -205,6 +205,10 @@ function createAnnotation(body, { gate = false } = {}) {
     if (!quote) return { status: 400, json: { error: "quote required" } };
     const state = store.readState();
     const bs = store.bookState(state, bookId);
+    // 归一化：把任意空白序列压成单个空格，用于模糊回退
+    const norm = (s) => String(s).replace(/\s+/g, " ").trim();
+    const normQuote = norm(quote);
+
     const matches = [];
     for (const [rs, re] of bs.pushedRanges) {
       for (let s = rs; s <= re; s += 1) {
@@ -213,10 +217,50 @@ function createAnnotation(body, { gate = false } = {}) {
         const para = chapter.paragraphs[s - ch.baseSeq];
         if (typeof para !== "string") continue;
         const at = para.indexOf(quote);
-        if (at >= 0) matches.push({ seq: s, startOff: at, endOff: at + quote.length, preview: para.slice(0, 40) });
+        if (at >= 0) {
+          matches.push({ seq: s, startOff: at, endOff: at + quote.length, preview: para.slice(0, 40) });
+        }
       }
     }
-    if (!matches.length) return { status: 404, json: { error: "quote not found in unlocked text（只能批注已解锁的内容，且必须与原文逐字一致）" } };
+    // 精确匹配失败后，用空白归一化再试
+    if (!matches.length) {
+      for (const [rs, re] of bs.pushedRanges) {
+        for (let s = rs; s <= re; s += 1) {
+          const ch = chapterOfSeq(manifest, s);
+          const chapter = store.readChapter(bookId, ch.idx);
+          const para = chapter.paragraphs[s - ch.baseSeq];
+          if (typeof para !== "string") continue;
+          const normPara = norm(para);
+          const at = normPara.indexOf(normQuote);
+          if (at >= 0) {
+            // 把归一化偏移映射回原始字符串位置
+            let oi = 0, ni = 0;
+            while (ni < at) {
+              if (/\s/.test(para[oi])) { while (oi < para.length && /\s/.test(para[oi])) oi++; ni++; }
+              else { oi++; ni++; }
+            }
+            const start = oi;
+            oi = start; ni = 0;
+            while (ni < normQuote.length) {
+              if (/\s/.test(para[oi])) { while (oi < para.length && /\s/.test(para[oi])) oi++; ni++; }
+              else { oi++; ni++; }
+            }
+            matches.push({ seq: s, startOff: start, endOff: oi, preview: para.slice(0, 40) });
+          }
+        }
+        if (matches.length) break;
+      }
+    }
+    if (!matches.length) {
+      let sample = "";
+      for (const [rs] of bs.pushedRanges) {
+        const ch = chapterOfSeq(manifest, rs);
+        const chapter = store.readChapter(bookId, ch.idx);
+        const para = chapter.paragraphs[rs - ch.baseSeq];
+        if (typeof para === "string") { sample = para.slice(0, 80); break; }
+      }
+      return { status: 404, json: { error: "quote not found in unlocked text（只能批注已解锁的内容，且必须与原文逐字一致）", hint: "原文样本（注意标点全角/半角）", sample } };
+    }
     if (matches.length > 1) return { status: 409, json: { error: "quote ambiguous, give a longer quote", matches: matches.slice(0, 5) } };
     ({ seq, startOff, endOff } = matches[0]);
   } else {
@@ -249,6 +293,16 @@ function createAnnotation(body, { gate = false } = {}) {
   };
   annotations.push(annotation);
   store.writeAnnotations(bookId, annotations);
+
+  // 人类新建批注 → 推送通知给 AI
+  if (!gate && author === "human") {
+    try {
+      enqueueSystemMessage(
+        `【共读·批注】${READER_NAME}在《${manifest.title}》中划了这段：\n"${quote}"\n\n${READER_NAME}写道：${String(comment).trim()}`
+      );
+    } catch {}
+  }
+
   return { status: 200, json: { ok: true, annotation } };
 }
 
@@ -262,6 +316,21 @@ function addComment(bookId, annoId, body) {
   const comment = { id: store.newId(), author, text: String(text).trim(), createdAt: new Date().toISOString() };
   annotation.comments.push(comment);
   store.writeAnnotations(bookId, annotations);
+
+  // 人类回复批注 → 推送通知给 AI
+  if (author === "human") {
+    try {
+      const manifest = store.readManifest(bookId);
+      const title = manifest ? manifest.title : bookId;
+      const annoQuote = (annotation.quote || "").length > 80
+        ? annotation.quote.slice(0, 80) + "…"
+        : (annotation.quote || "");
+      enqueueSystemMessage(
+        `【共读·批注回复】${READER_NAME}回复了《${title}》中的一条批注：\n原批注："${annoQuote}"\n\n${READER_NAME}写道：${String(text).trim()}`
+      );
+    } catch {}
+  }
+
   return { status: 200, json: { ok: true, comment } };
 }
 
@@ -405,13 +474,16 @@ function readRawBody(req, maxBytes) {
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
-    let data = "";
+    const chunks = [];
+    let size = 0;
     req.on("data", (chunk) => {
-      data += chunk;
-      if (data.length > 1024 * 1024) reject(new Error("body too large"));
+      size += chunk.length;
+      if (size > 1024 * 1024) reject(new Error("body too large"));
+      chunks.push(chunk);
     });
     req.on("end", () => {
       try {
+        const data = Buffer.concat(chunks).toString("utf8");
         resolve(data ? JSON.parse(data) : {});
       } catch {
         reject(new Error("bad json"));
@@ -538,6 +610,35 @@ const server = http.createServer(async (req, res) => {
       return send(res, out.status, out.json);
     }
 
+    // 轮询：自某个时间点以来新增的 AI 批注和回复（供前端 Toast 通知）
+    if (req.method === "GET" && (m = p.match(/^\/api\/annotations\/([\w-]+)\/poll$/))) {
+      const since = url.searchParams.get("since") || "";
+      const annotations = store.readAnnotations(m[1]);
+      let sinceDate;
+      try { sinceDate = since ? new Date(since) : new Date(0); } catch { sinceDate = new Date(0); }
+      if (isNaN(sinceDate.getTime())) sinceDate = new Date(0);
+
+      const newAiAnnotations = annotations.filter((a) =>
+        a.createdBy === "ai" && new Date(a.createdAt) > sinceDate
+      );
+      const newAiComments = [];
+      for (const a of annotations) {
+        const fresh = a.comments.filter((c) =>
+          c.author === "ai" && new Date(c.createdAt) > sinceDate
+        );
+        if (fresh.length) {
+          newAiComments.push({ annotationId: a.id, quote: a.quote, comments: fresh });
+        }
+      }
+
+      return send(res, 200, {
+        hasNew: newAiAnnotations.length > 0 || newAiComments.length > 0,
+        newAiAnnotations,
+        newAiComments,
+        serverTime: new Date().toISOString(),
+      });
+    }
+
     if (req.method === "GET" && (m = p.match(/^\/api\/bookmarks\/([\w-]+)$/))) {
       return send(res, 200, { bookmarks: store.readBookmarks(m[1]) });
     }
@@ -567,6 +668,19 @@ const server = http.createServer(async (req, res) => {
       return send(res, out.status, out.json);
     }
 
+    // 静态文件：直连模式下提供 reader.html 等前端资源
+    if (req.method === "GET") {
+      const staticFile = p === "/" || p === "" ? "reader.html" : p.replace(/^\//, "");
+      const mime = path.extname(staticFile) === ".html" ? "text/html; charset=utf-8" : "application/octet-stream";
+      if (serveStatic(res, staticFile, mime)) return;
+    }
+
+    // /reading/api/... → /api/...（兼容 nginx 反代路径，直连也能用）
+    if (p.startsWith("/reading/api/")) {
+      req.url = req.url.replace("/reading/api", "/api");
+      return server.emit("request", req, res);
+    }
+
     if (req.method === "GET" && p === "/health") {
       return send(res, 200, { ok: true, pushEnabled: PUSH_ENABLED });
     }
@@ -576,6 +690,18 @@ const server = http.createServer(async (req, res) => {
     return send(res, 500, { error: String(error?.message || error) });
   }
 });
+
+// 静态文件服务（直连模式，无需 nginx）
+const WEB_DIR = path.join(__dirname, "web");
+function serveStatic(res, filePath, contentType) {
+  try {
+    const full = path.resolve(WEB_DIR, filePath);
+    if (!full.startsWith(WEB_DIR + path.sep) || !fs.statSync(full).isFile()) return false;
+    res.writeHead(200, { "Content-Type": contentType, "Cache-Control": "public, max-age=3600" });
+    fs.createReadStream(full).pipe(res);
+    return true;
+  } catch { return false; }
+}
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`[reading] listening on 0.0.0.0:${PORT} pushEnabled=${PUSH_ENABLED} dwell=${DWELL_MS}ms idle=${IDLE_CLOSE_MS}ms`);
