@@ -5,6 +5,13 @@ const { runTelegramLoginFlow } = require("./login");
 const { createInboundFilter } = require("./message-utils");
 const { TelegramOffsetStore } = require("./offset-store");
 const {
+  buildCallbackInboundUpdate,
+  buildTelegramReplyMarkup,
+  extractTelegramInlineKeyboard,
+  findCallbackButton,
+  findCallbackButtonText,
+} = require("./inline-keyboard");
+const {
   collectStreamingBoundaries,
   splitTextAtBoundaries,
   trimOuterBlankLines,
@@ -16,6 +23,8 @@ const {
   saveTelegramConfig,
 } = require("./config-store");
 const {
+  answerCallbackQuery,
+  editMessageReplyMarkup,
   getUpdates,
   sendChatAction,
   sendDocument,
@@ -46,13 +55,16 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
     if (!chatId) {
       throw new Error("telegram sendText requires a chatId (userId)");
     }
-    const content = String(text || "");
-    if (!content.trim()) {
+    const extracted = extractTelegramInlineKeyboard(text);
+    const content = extracted.text;
+    const replyMarkup = buildTelegramReplyMarkup(extracted.buttons);
+    if (!content.trim() && !replyMarkup) {
       return;
     }
+    const visibleContent = content.trim() || "请选择：";
     const chunks = preserveBlock
-      ? splitForTelegram(content, MAX_TELEGRAM_TEXT_BYTES)
-      : chunkReplyTextForTelegram(content, minTelegramChunk);
+      ? splitForTelegram(visibleContent, MAX_TELEGRAM_TEXT_BYTES)
+      : chunkReplyTextForTelegram(visibleContent, minTelegramChunk);
     for (let index = 0; index < chunks.length; index += 1) {
       const chunk = chunks[index];
       await sendMessage({
@@ -61,6 +73,7 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
         chatId,
         text: chunk,
         parseMode,
+        replyMarkup: index === chunks.length - 1 ? replyMarkup : null,
       });
       if (index < chunks.length - 1) {
         await sleep(SEND_MESSAGE_INTERVAL_MS);
@@ -144,11 +157,22 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
         botToken: account.botToken,
         offset,
         timeoutS,
-        allowedUpdates: ["message", "edited_message"],
+        allowedUpdates: ["message", "edited_message", "callback_query"],
       });
-      const list = Array.isArray(updates) ? updates : [];
-      if (list.length) {
-        const maxUpdateId = list.reduce((acc, update) => Math.max(acc, Number(update.update_id) || 0), offset - 1);
+      const rawList = Array.isArray(updates) ? updates : [];
+      const list = [];
+      for (const update of rawList) {
+        if (!update?.callback_query) {
+          list.push(update);
+          continue;
+        }
+        const callbackUpdate = await handleCallbackQueryUpdate(update, account);
+        if (callbackUpdate) {
+          list.push(callbackUpdate);
+        }
+      }
+      if (rawList.length) {
+        const maxUpdateId = rawList.reduce((acc, update) => Math.max(acc, Number(update.update_id) || 0), offset - 1);
         offsetStore.setOffset(account.accountId, maxUpdateId + 1);
         for (const update of list) {
           const msg = update.message || update.edited_message || {};
@@ -230,6 +254,72 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
     } catch {
       return null;
     }
+  }
+
+  async function handleCallbackQueryUpdate(update, account) {
+    const query = update?.callback_query;
+    const callbackQueryId = String(query?.id || "");
+    const chatId = String(query?.message?.chat?.id ?? "");
+    const messageId = query?.message?.message_id;
+    const externalUserId = String(query?.from?.id ?? "");
+    if (!callbackQueryId) {
+      return null;
+    }
+
+    const selectedButton = findCallbackButton(query);
+    const buttonText = selectedButton?.text || "";
+    const callbackData = selectedButton?.callback_data || "";
+    const allowedChatIds = Array.isArray(config.telegramAllowedChatIds)
+      ? config.telegramAllowedChatIds.map(String)
+      : [];
+    const canonical = identityMapStore && typeof identityMapStore.resolveCanonical === "function"
+      ? identityMapStore.resolveCanonical({ channel: "telegram", externalId: externalUserId })
+      : null;
+    const allowedByConfig = !allowedChatIds.length
+      || allowedChatIds.includes(chatId)
+      || allowedChatIds.includes(externalUserId)
+      || allowedChatIds.includes(String(canonical?.senderId || ""));
+    const linkedIdentityRequired = !!identityMapStore;
+    const authorized = allowedByConfig && (!linkedIdentityRequired || !!canonical?.senderId);
+
+    await answerCallbackQuery({
+      baseUrl: account.apiBaseUrl,
+      botToken: account.botToken,
+      callbackQueryId,
+      text: authorized && buttonText ? "" : "这个选项不能使用或已经失效",
+    }).catch(() => {});
+
+    if (!authorized || !buttonText || !chatId || !messageId) {
+      return null;
+    }
+
+    await editMessageReplyMarkup({
+      baseUrl: account.apiBaseUrl,
+      botToken: account.botToken,
+      chatId,
+      messageId,
+    }).catch((error) => {
+      console.warn(`[telegram] failed to clear inline keyboard chat=${chatId} message=${messageId}: ${error.message}`);
+    });
+
+    if (callbackData.startsWith("input:")) {
+      const requestedPlaceholder = callbackData.slice("input:".length).trim();
+      const inputPlaceholder = Array.from(requestedPlaceholder || "直接输入你的选择").slice(0, 64).join("");
+      await sendMessage({
+        baseUrl: account.apiBaseUrl,
+        botToken: account.botToken,
+        chatId,
+        text: "好，直接输入你的选择：",
+        replyMarkup: {
+          force_reply: true,
+          selective: true,
+          input_field_placeholder: inputPlaceholder,
+        },
+      });
+      return null;
+    }
+
+    return buildCallbackInboundUpdate(update, buttonText);
   }
 }
 
@@ -353,7 +443,12 @@ function sleep(ms) {
 }
 
 module.exports = {
+  buildCallbackInboundUpdate,
+  buildTelegramReplyMarkup,
   createTelegramChannelAdapter,
+  extractTelegramInlineKeyboard,
+  findCallbackButton,
+  findCallbackButtonText,
   normalizeTelegramReplyText,
   chunkReplyTextForTelegram,
   mergeTelegramShortChunks,

@@ -47,6 +47,7 @@ function buildMergedInboundPrepared({
 function assembleRuntimeTurnText({ prepared, config = {}, visionContext = {} }) {
   const lines = [];
   const localTime = formatWechatLocalTime(prepared?.receivedAt);
+  const channelLabel = formatInboundChannelLabel(prepared?.channelId || prepared?.provider);
   const originalText = normalizeText(prepared?.originalText ?? prepared?.text);
   const attachments = Array.isArray(prepared?.attachments) ? prepared.attachments : [];
   const attachmentFailures = Array.isArray(prepared?.attachmentFailures) ? prepared.attachmentFailures : [];
@@ -54,8 +55,9 @@ function assembleRuntimeTurnText({ prepared, config = {}, visionContext = {} }) 
   const visualItems = Array.isArray(visionContext.items) ? visionContext.items : [];
   const visionErrors = Array.isArray(visionContext.errors) ? visionContext.errors : [];
 
-  if (localTime) {
-    lines.push(`[${localTime}]`);
+  if (localTime || channelLabel) {
+    const heading = [channelLabel, localTime].filter(Boolean).join(" · ");
+    lines.push(`[${heading}]`);
   }
   if (originalText) {
     if (lines.length) {
@@ -167,6 +169,7 @@ function clonePreparedInboundMessage(prepared) {
     messageId: prepared.messageId,
     contextToken: prepared.contextToken,
     provider: prepared.provider,
+    channelId: prepared.channelId,
     originalText: prepared.originalText,
     text: prepared.text,
     attachments: Array.isArray(prepared.attachments) ? prepared.attachments : [],
@@ -217,6 +220,17 @@ function formatWechatLocalTime(receivedAt) {
   }).format(parsed).replace(/\//g, "-");
 }
 
+function formatInboundChannelLabel(channelId) {
+  const normalized = normalizeText(channelId).toLowerCase();
+  if (normalized === "telegram") {
+    return "Telegram";
+  }
+  if (normalized === "weixin" || normalized === "wechat") {
+    return "微信";
+  }
+  return "";
+}
+
 module.exports = {
   assembleRuntimeTurnText,
   buildInboundDraft,
@@ -224,6 +238,7 @@ module.exports = {
   clonePreparedInboundMessage,
   isImageAttachmentItem,
   isPlainTextPreparedMessage,
+  formatInboundChannelLabel,
   shouldBatchImageOnlyInbound,
   takeImageOnlyBatchMessages,
 };

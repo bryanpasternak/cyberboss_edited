@@ -30,6 +30,7 @@ const {
 const { CheckinConfigStore, parseCheckinRangeMinutes, resolveDefaultCheckinRange } = require("./checkin-config-store");
 const { resolvePreferredSenderId, resolvePreferredWorkspaceRoot } = require("./default-targets");
 const { StreamDelivery } = require("./stream-delivery");
+const { ReplySelfReviewController, ReplySelfReviewStore } = require("./reply-self-review");
 const { ThreadStateStore } = require("./thread-state-store");
 const { AutoCompactService } = require("./auto-compact-service");
 const { DeferredSystemReplyStore } = require("./deferred-system-reply-store");
@@ -117,6 +118,14 @@ class CyberbossApp {
     this.projectToolHost = projectTooling.toolHost;
     this.runtimeContextStore = projectTooling.runtimeContextStore;
     this.runtimeAdapter = createRuntimeAdapter(config);
+    this.replySelfReviewStore = new ReplySelfReviewStore({
+      filePath: config.replySelfReviewConfigFile || path.join(config.stateDir, "reply-self-review.json"),
+    });
+    this.replySelfReview = new ReplySelfReviewController({
+      store: this.replySelfReviewStore,
+      startReview: (payload) => this.startReplySelfReview(payload),
+      rejectReviewApproval: (event) => this.rejectReplySelfReviewApproval(event),
+    });
     this.threadStateStore = new ThreadStateStore();
     this.systemMessageQueue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
     this.deferredSystemReplyQueue = new DeferredSystemReplyStore({ filePath: config.deferredSystemReplyQueueFile });
@@ -719,6 +728,15 @@ class CyberbossApp {
       } else {
         this.streamDelivery.queueReplyTargetForThread(turn.threadId, replyTarget);
       }
+      this.replySelfReview?.registerTurn?.({
+        threadId: turn.threadId,
+        turnId: turn.turnId,
+        bindingKey,
+        workspaceRoot,
+        userText: prepared.originalText ?? prepared.text,
+        model,
+        provider: prepared.provider,
+      });
       return true;
     } catch (error) {
       this.turnGateStore.releaseScope(bindingKey, workspaceRoot);
@@ -739,6 +757,33 @@ class CyberbossApp {
       }).catch(() => {});
       return false;
     }
+  }
+
+  async startReplySelfReview({ threadId, bindingKey, workspaceRoot, prompt, model }) {
+    const sendTurn = typeof this.runtimeAdapter.sendTurn === "function"
+      ? this.runtimeAdapter.sendTurn.bind(this.runtimeAdapter)
+      : this.runtimeAdapter.sendTextTurn.bind(this.runtimeAdapter);
+    const turn = await sendTurn({
+      bindingKey,
+      workspaceRoot,
+      text: prompt,
+      model,
+      metadata: {
+        provider: "system",
+        _replySelfReview: true,
+      },
+    });
+    if (!turn?.threadId || turn.threadId !== threadId) {
+      throw new Error("reply self-review left the original runtime thread");
+    }
+    return turn;
+  }
+
+  async rejectReplySelfReviewApproval(event) {
+    const response = buildApprovalResponsePayload(event?.payload, "no");
+    if (!response) return;
+    await this.runtimeAdapter.respondApproval(response);
+    this.threadStateStore.resolveApproval(event.payload.threadId, "running");
   }
 
   async buildRuntimeTurn({ prepared, model = "" }) {
@@ -1372,6 +1417,9 @@ class CyberbossApp {
         case "recall":
           await this.handleRecallCommand(normalized, command);
           return;
+        case "selfreview":
+          await this.handleSelfReviewCommand(normalized, command);
+          return;
         case "link":
           await this.handleLinkCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
           return;
@@ -1455,6 +1503,41 @@ class CyberbossApp {
     await channel.sendText({
       userId: normalized.senderId,
       text: removed ? "✅ 已解除当前渠道的身份绑定。" : "💡 当前渠道没有绑定记录。",
+      contextToken: normalized.contextToken,
+    });
+  }
+
+  async handleSelfReviewCommand(normalized, command) {
+    const subcommand = normalizeCommandName(normalizeCommandArgument(command.args) || "status");
+    if (!["status", "on", "off"].includes(subcommand)) {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: "用法：/selfreview on | off | status",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+    if (subcommand === "on") this.replySelfReview.setEnabled(true);
+    if (subcommand === "off") this.replySelfReview.setEnabled(false);
+
+    const bindingKey = this.runtimeAdapter.getSessionStore().buildBindingKey({
+      workspaceId: normalized.workspaceId,
+      accountId: normalized.accountId,
+      senderId: normalized.senderId,
+    });
+    const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
+    const status = this.replySelfReview.status({ bindingKey, workspaceRoot });
+    const cooldownMinutes = Math.ceil(status.remainingMs / 60_000);
+    const lines = [
+      `回复自审：${status.enabled ? "已开启" : "已关闭"}`,
+      "缓冲时间：15 分钟",
+    ];
+    if (status.enabled && cooldownMinutes > 0) {
+      lines.push(`当前缓冲剩余：约 ${cooldownMinutes} 分钟`);
+    }
+    await this.currentChannel.sendText({
+      userId: normalized.senderId,
+      text: lines.join("\n"),
       contextToken: normalized.contextToken,
     });
   }
@@ -2391,6 +2474,19 @@ class CyberbossApp {
   }
 
   async handleRuntimeEvent(event) {
+    const resolvedEvents = typeof this.replySelfReview?.handleRuntimeEvent === "function"
+      ? await this.replySelfReview.handleRuntimeEvent(event)
+      : [event];
+    for (const resolvedEvent of resolvedEvents) {
+      if (typeof this.handleResolvedRuntimeEvent === "function") {
+        await this.handleResolvedRuntimeEvent(resolvedEvent);
+      } else {
+        await CyberbossApp.prototype.handleResolvedRuntimeEvent.call(this, resolvedEvent);
+      }
+    }
+  }
+
+  async handleResolvedRuntimeEvent(event) {
     const failureReplyTarget = event?.type === "runtime.turn.failed"
       ? this.streamDelivery.resolveReplyTargetForRun({
           threadId: event?.payload?.threadId,

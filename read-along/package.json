@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "start:cyberboss": "node start-cyberboss.js",
+    "mcp": "node mcp-server.js",
     "import": "node import-book.js"
   },
   "engines": {

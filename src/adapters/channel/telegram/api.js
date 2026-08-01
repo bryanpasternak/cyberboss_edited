@@ -144,7 +144,16 @@ async function getUpdates({ baseUrl, botToken, offset = 0, timeoutS = DEFAULT_LO
   });
 }
 
-async function sendMessage({ baseUrl, botToken, chatId, text, parseMode = "", disablePreview = true, replyToMessageId = 0 }) {
+async function sendMessage({
+  baseUrl,
+  botToken,
+  chatId,
+  text,
+  parseMode = "",
+  disablePreview = true,
+  replyToMessageId = 0,
+  replyMarkup = null,
+}) {
   const body = {
     chat_id: chatId,
     text,
@@ -158,7 +167,42 @@ async function sendMessage({ baseUrl, botToken, chatId, text, parseMode = "", di
   if (replyToMessageId) {
     body.reply_parameters = { message_id: Number(replyToMessageId) };
   }
+  if (replyMarkup && typeof replyMarkup === "object") {
+    body.reply_markup = replyMarkup;
+  }
   return request({ baseUrl, botToken, method: "sendMessage", body, label: "telegram" });
+}
+
+async function answerCallbackQuery({ baseUrl, botToken, callbackQueryId, text = "" }) {
+  const body = {
+    callback_query_id: String(callbackQueryId || ""),
+  };
+  if (text) {
+    body.text = String(text);
+  }
+  return request({
+    baseUrl,
+    botToken,
+    method: "answerCallbackQuery",
+    body,
+    label: "telegram",
+    timeoutMs: 10_000,
+  });
+}
+
+async function editMessageReplyMarkup({ baseUrl, botToken, chatId, messageId, replyMarkup = null }) {
+  return request({
+    baseUrl,
+    botToken,
+    method: "editMessageReplyMarkup",
+    body: {
+      chat_id: chatId,
+      message_id: Number(messageId),
+      reply_markup: replyMarkup || { inline_keyboard: [] },
+    },
+    label: "telegram",
+    timeoutMs: 10_000,
+  });
 }
 
 async function sendChatAction({ baseUrl, botToken, chatId, action = "typing" }) {
@@ -244,7 +288,9 @@ async function uploadFile({ baseUrl, botToken, method, chatId, fileBuffer, fileN
 }
 
 module.exports = {
+  answerCallbackQuery,
   buildFileDownloadUrl,
+  editMessageReplyMarkup,
   fetchWithProxy,
   getFile,
   getMe,

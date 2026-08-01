@@ -124,6 +124,7 @@ function normalizeContextPayload(message) {
   const payload = message?.payload || {};
   const info = payload?.info || {};
   const total = info?.total_token_usage || {};
+  const last = info?.last_token_usage || {};
   return {
     runtimeId: "codex",
     threadId: normalizeString(payload?.thread_id || info?.thread_id),
@@ -131,7 +132,7 @@ function normalizeContextPayload(message) {
     cachedInputTokens: numberOrZero(total.cached_input_tokens),
     outputTokens: numberOrZero(total.output_tokens),
     reasoningTokens: numberOrZero(total.reasoning_output_tokens),
-    currentTokens: numberOrZero(total.total_tokens),
+    currentTokens: numberOrFallback(last.total_tokens, total.total_tokens),
     contextWindow: numberOrZero(info?.model_context_window),
   };
 }
@@ -139,6 +140,7 @@ function normalizeContextPayload(message) {
 function normalizeModernContextPayload(params) {
   const usage = params?.tokenUsage || {};
   const total = usage?.total || {};
+  const last = usage?.last || {};
   return {
     runtimeId: "codex",
     threadId: normalizeString(params?.threadId),
@@ -146,7 +148,7 @@ function normalizeModernContextPayload(params) {
     cachedInputTokens: numberOrZero(total.cachedInputTokens),
     outputTokens: numberOrZero(total.outputTokens),
     reasoningTokens: numberOrZero(total.reasoningOutputTokens),
-    currentTokens: numberOrZero(total.totalTokens),
+    currentTokens: numberOrFallback(last.totalTokens, total.totalTokens),
     contextWindow: numberOrZero(usage?.modelContextWindow),
   };
 }
@@ -338,6 +340,10 @@ function normalizeLineEndings(value) {
 
 function numberOrZero(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
+}
+
+function numberOrFallback(value, fallbackValue) {
+  return Number.isFinite(Number(value)) ? Number(value) : numberOrZero(fallbackValue);
 }
 
 module.exports = { mapCodexMessageToRuntimeEvent };

@@ -11,6 +11,13 @@ test("codex maps modern thread token usage notifications", () => {
       threadId: "thread-1",
       turnId: "turn-1",
       tokenUsage: {
+        last: {
+          totalTokens: 2500,
+          inputTokens: 2300,
+          cachedInputTokens: 1800,
+          outputTokens: 150,
+          reasoningOutputTokens: 50,
+        },
         total: {
           totalTokens: 12345,
           inputTokens: 10000,
@@ -32,7 +39,48 @@ test("codex maps modern thread token usage notifications", () => {
       cachedInputTokens: 8000,
       outputTokens: 2000,
       reasoningTokens: 345,
-      currentTokens: 12345,
+      currentTokens: 2500,
+      contextWindow: 200000,
+    },
+  });
+});
+
+test("codex maps legacy token counts using the latest context usage", () => {
+  const event = mapCodexMessageToRuntimeEvent({
+    type: "event_msg",
+    payload: {
+      type: "token_count",
+      thread_id: "thread-legacy",
+      info: {
+        total_token_usage: {
+          input_tokens: 100000,
+          cached_input_tokens: 80000,
+          output_tokens: 5000,
+          reasoning_output_tokens: 1000,
+          total_tokens: 105000,
+        },
+        last_token_usage: {
+          input_tokens: 28000,
+          cached_input_tokens: 24000,
+          output_tokens: 500,
+          reasoning_output_tokens: 100,
+          total_tokens: 28500,
+        },
+        model_context_window: 200000,
+      },
+    },
+  });
+
+  assert.deepEqual(event, {
+    type: "runtime.context.updated",
+    payload: {
+      runtimeId: "codex",
+      threadId: "thread-legacy",
+      inputTokens: 100000,
+      cachedInputTokens: 80000,
+      outputTokens: 5000,
+      reasoningTokens: 1000,
+      currentTokens: 28500,
       contextWindow: 200000,
     },
   });
@@ -232,6 +280,9 @@ test("handleApprovalCommand sends MCP elicitation responses back through the run
         sent.push(payload.text);
       },
     },
+    get currentChannel() {
+      return this.channelAdapter;
+    },
   };
 
   await CyberbossApp.prototype.handleApprovalCommand.call(
@@ -299,6 +350,9 @@ test("handleApprovalCommand does not pretend to support persistent Codex MCP too
       async sendText(payload) {
         sent.push(payload.text);
       },
+    },
+    get currentChannel() {
+      return this.channelAdapter;
     },
   };
 

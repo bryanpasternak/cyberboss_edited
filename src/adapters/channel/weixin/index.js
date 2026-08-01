@@ -250,7 +250,13 @@ function splitUtf8(text, maxRunes) {
 }
 
 function normalizeWeixinReplyText(text) {
-  return trimOuterBlankLines(normalizeLineEndings(text));
+  return trimOuterBlankLines(normalizeLineEndings(stripTelegramInlineKeyboardDirective(text)));
+}
+
+function stripTelegramInlineKeyboardDirective(text) {
+  return String(text || "")
+    .replace(/\n?<!--telegram-inline-keyboard:[\s\S]*?-->\s*$/u, "")
+    .trimEnd();
 }
 
 function finalizeWeixinDeliveryChunk(text) {
@@ -493,6 +499,7 @@ module.exports = {
   createWeixinChannelAdapter,
   splitUtf8,
   normalizeWeixinReplyText,
+  stripTelegramInlineKeyboardDirective,
   finalizeWeixinDeliveryChunk,
   stripChunkTailChineseFullStops,
   chunkReplyText,

@@ -40,6 +40,7 @@ function readConfig() {
     systemMessageQueueFile: path.join(stateDir, "system-message-queue.json"),
     deferredSystemReplyQueueFile: path.join(stateDir, "deferred-system-replies.json"),
     checkinConfigFile: path.join(stateDir, "checkin-config.json"),
+    replySelfReviewConfigFile: path.join(stateDir, "reply-self-review.json"),
     timelineScreenshotQueueFile: path.join(stateDir, "timeline-screenshot-queue.json"),
     projectToolContextFile: path.join(stateDir, "project-tool-runtime-context.json"),
     chatMemoryDir: path.join(stateDir, "chat-memory"),
@@ -103,7 +104,8 @@ function readConfig() {
     desirePanelHost: readTextEnv("CYBERBOSS_DESIRE_PANEL_HOST") || "127.0.0.1",
     desirePanelPort: readIntEnv("CYBERBOSS_DESIRE_PANEL_PORT") || 8765,
     weixinInstructionsFile: path.join(stateDir, "weixin-instructions.md"),
-    weixinOperationsFile: path.resolve(__dirname, "..", "..", "templates", "weixin-operations.md"),
+    weixinOperationsFile: resolveOptionalPath(readTextEnv("CYBERBOSS_WEIXIN_OPERATIONS_FILE"))
+      || path.resolve(__dirname, "..", "..", "templates", "weixin-operations.md"),
     startupPromptFile: resolveOptionalPath(readTextEnv("CYBERBOSS_STARTUP_PROMPT_FILE")) || path.join(process.cwd(), "anchor", "startup_prompt.txt"),
     midnightTriggerFile: resolveOptionalPath(readTextEnv("CYBERBOSS_MIDNIGHT_TRIGGER_FILE")) || path.join(process.cwd(), "anchor", "midnight_trigger.txt"),
     anchorDir: resolveOptionalPath(readTextEnv("CYBERBOSS_ANCHOR_DIR")) || path.join(process.cwd(), "anchor"),

@@ -5,6 +5,17 @@ const os = require("os");
 const path = require("path");
 
 const { CyberbossApp } = require("../src/core/app");
+const { assembleRuntimeTurnText } = require("../src/core/inbound-turn");
+
+test("runtime turn heading identifies Telegram and WeChat sources", () => {
+  const receivedAt = "2026-04-17T10:00:00.000Z";
+  assert.match(assembleRuntimeTurnText({
+    prepared: { provider: "telegram", receivedAt, text: "TG" },
+  }), /^\[Telegram · 2026-04-17 18:00\]/);
+  assert.match(assembleRuntimeTurnText({
+    prepared: { provider: "weixin", receivedAt, text: "WX" },
+  }), /^\[微信 · 2026-04-17 18:00\]/);
+});
 
 test("system messages bypass normal inbound wrapping", async () => {
   const prepared = await CyberbossApp.prototype.prepareIncomingMessageForRuntime.call({}, {
@@ -48,6 +59,9 @@ test("image attachments stay as inbound drafts before runtime turn assembly", as
         describe() {
           return { id: "codex" };
         },
+      },
+      resolveChannelById() {
+        return this.channelAdapter;
       },
       channelAdapter: {
         async sendText() {},
@@ -121,6 +135,9 @@ test("image prompt assembly is runtime-neutral for claudecode drafts", async () 
         describe() {
           return { id: "claudecode" };
         },
+      },
+      resolveChannelById() {
+        return this.channelAdapter;
       },
       channelAdapter: {
         async sendText() {},
@@ -279,6 +296,10 @@ test("image-only inbound turns enter the dedicated debounce queue", async () => 
     },
     streamDelivery: {
       setReplyTarget() {},
+    },
+    channelAdapter: {},
+    resolveChannelById() {
+      return this.channelAdapter;
     },
     resolveWorkspaceRoot() {
       return "/workspace";

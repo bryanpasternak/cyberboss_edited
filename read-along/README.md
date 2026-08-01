@@ -39,6 +39,27 @@ node import-book.js /path/to/book.epub --id mybook
 
 前端：把 `web/reader.html` 放到 nginx 下，API 反代到 `127.0.0.1:18004`（详见 [docs/DEPLOY.md](docs/DEPLOY.md)）。
 
+### Codex MCP
+
+仓库根目录提供一层轻量 stdio MCP 适配器，复用本服务已有的 HTTP API：
+
+```powershell
+codex mcp add read-along -- node C:\Users\19670\cyberboss\read-along\mcp-server.js
+```
+
+MCP 只可读取已经由共读推送解锁的正文，并可列出批注、写 AI 批注和回复批注。HTTP
+后端仍需通过 `npm start` 单独运行；可用 `READ_ALONG_BASE_URL` 修改默认地址
+`http://127.0.0.1:18004`。
+
+Cyberboss 本机共读可直接使用：
+
+```powershell
+npm run start:cyberboss
+```
+
+该入口默认开启正文推送、将读者名设为“苏苏”，并使用当前用户目录下的
+`.cyberboss` 状态目录；仍可通过同名环境变量覆盖这些默认值。
+
 联调通过后，开启真实推送：
 
 ```bash

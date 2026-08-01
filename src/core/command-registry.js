@@ -177,6 +177,14 @@ const COMMAND_GROUPS = [
         telegram: ["/recall", "/recall on", "/recall off", "/recall <number>"],
         status: "active",
       },
+      {
+        action: "reply.self_review",
+        summary: "Control the send-before-reply self-review hook",
+        terminal: [],
+        weixin: ["/selfreview", "/selfreview on", "/selfreview off", "/selfreview status"],
+        telegram: ["/selfreview", "/selfreview on", "/selfreview off", "/selfreview status"],
+        status: "active",
+      },
     ],
   },
   {
@@ -458,6 +466,7 @@ function actionEmoji(action) {
     case "thread.stop": return "⏹️";
     case "system.checkin_range": return "⏰";
     case "memory.recall": return "🧠";
+    case "reply.self_review": return "🪝";
     case "approval.accept_once": return "✅";
     case "approval.accept_workspace": return "💡";
     case "approval.reject_once": return "❌";

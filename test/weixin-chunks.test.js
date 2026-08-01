@@ -4,6 +4,7 @@ const assert = require("node:assert/strict");
 const {
   splitUtf8,
   normalizeWeixinReplyText,
+  stripTelegramInlineKeyboardDirective,
   finalizeWeixinDeliveryChunk,
   stripChunkTailChineseFullStops,
   chunkReplyText,
@@ -20,6 +21,12 @@ const {
 test("normalizeWeixinReplyText trims outer blank lines but preserves internal blank lines", () => {
   const text = "line1\r\n\r\n\nline2\n\n\nline3";
   assert.equal(normalizeWeixinReplyText(text), "line1\n\n\nline2\n\n\nline3");
+});
+
+test("weixin strips a trailing Telegram inline keyboard directive", () => {
+  const text = '正文\n<!--telegram-inline-keyboard:[{"text":"抱抱","callback_data":"hug"}]-->';
+  assert.equal(stripTelegramInlineKeyboardDirective(text), "正文");
+  assert.equal(normalizeWeixinReplyText(text), "正文");
 });
 
 test("stripChunkTailChineseFullStops only removes a chunk-ending Chinese full stop", () => {
