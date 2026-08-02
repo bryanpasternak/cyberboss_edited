@@ -60,6 +60,7 @@ function readConfig() {
     chatMemoryChunkMaxChars: readIntEnv("CYBERBOSS_CHAT_MEMORY_CHUNK_MAX_CHARS") || 1200,
     chatMemoryInjectEnabled: readOptionalBoolEnv("CYBERBOSS_CHAT_MEMORY_INJECT_ENABLED") !== false,
     chatMemoryInjectLimit: readIntEnv("CYBERBOSS_CHAT_MEMORY_INJECT_LIMIT") || 6,
+    chatMemoryThreadRecapEnabled: readOptionalBoolEnv("CYBERBOSS_CHAT_MEMORY_THREAD_RECAP_ENABLED") !== false,
     chatMemoryToolEnabled: readOptionalBoolEnv("CYBERBOSS_CHAT_MEMORY_TOOL_ENABLED") !== false,
     chatMemoryEmbedProvider: readTextEnv("CYBERBOSS_CHAT_MEMORY_EMBED_PROVIDER") || "local-hashed-ngram-512",
     chatMemoryEmbedBaseUrl: readTextEnv("CYBERBOSS_CHAT_MEMORY_EMBED_BASE_URL"),

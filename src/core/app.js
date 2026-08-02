@@ -1709,20 +1709,22 @@ class CyberbossApp {
 
   async buildNewThreadOpeningContext({ previousThreadId = "", bindingKey = "", workspaceRoot = "" } = {}) {
     const blocks = [];
-    try {
-      const recap = await this.chatMemory?.memory?.buildThreadRecap?.({
-        threadId: previousThreadId,
-        bindingKey,
-        workspaceRoot,
-        headTurns: 15,
-        tailTurns: 15,
-        omitTailTurns: 2,
-      });
-      if (recap) {
-        blocks.push(recap);
+    if (this.config?.chatMemoryThreadRecapEnabled !== false) {
+      try {
+        const recap = await this.chatMemory?.memory?.buildThreadRecap?.({
+          threadId: previousThreadId,
+          bindingKey,
+          workspaceRoot,
+          headTurns: 15,
+          tailTurns: 15,
+          omitTailTurns: 2,
+        });
+        if (recap) {
+          blocks.push(recap);
+        }
+      } catch (error) {
+        console.warn(`[chat-memory] previous thread recap failed: ${error.message}`);
       }
-    } catch (error) {
-      console.warn(`[chat-memory] previous thread recap failed: ${error.message}`);
     }
     try {
       const recent = await this.chatMemory?.memory?.retrieveRecent?.({
