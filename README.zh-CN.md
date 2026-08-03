@@ -146,6 +146,7 @@ CYBERBOSS_CODEX_ENDPOINT=ws://127.0.0.1:8765
 CYBERBOSS_CODEX_COMMAND=
 CYBERBOSS_CODEX_MODEL=
 CYBERBOSS_CODEX_MODEL_PROVIDER=
+CYBERBOSS_CODEX_REASONING_EFFORT=
 CYBERBOSS_CODEX_NATIVE_IMAGE_INPUT=
 CYBERBOSS_CLAUDE_COMMAND=claude
 CYBERBOSS_CLAUDE_MODEL=
@@ -188,6 +189,8 @@ CYBERBOSS_LOCATION_BATTERY_HISTORY_LIMIT=100
   强制 Codex turn 使用指定模型。留空则使用 Codex 默认模型选择。
 - `CYBERBOSS_CODEX_MODEL_PROVIDER`
   强制 Codex turn 使用指定 provider，例如本地模型可填 `ollama`。留空则使用默认云端 provider。
+- `CYBERBOSS_CODEX_REASONING_EFFORT`
+  强制 Codex turn 使用指定 reasoning effort，例如 `low`、`high`、`xhigh`、`max` 或 `ultra`。具体可用值取决于所选模型；留空则使用 Codex 默认值。
 - `CYBERBOSS_CODEX_NATIVE_IMAGE_INPUT`
   Codex app-server 直传图片能力的可选覆盖。留空时按 model metadata 判断；设为 `true` 可直接测试本地多模态模型，设为 `false` 可强制走 caption fallback。
 - `CYBERBOSS_CLAUDE_COMMAND`

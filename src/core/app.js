@@ -1646,6 +1646,7 @@ class CyberbossApp {
     const storedModel = runtimeParams.model || "";
     const storedModelProvider = runtimeParams.modelProvider || this.runtimeAdapter.describe().modelProvider || "";
     const effectiveModel = this.runtimeAdapter.describe().model || storedModel;
+    const effectiveReasoningEffort = this.runtimeAdapter.describe().reasoningEffort || "";
 
     const lines = [
       `📍 workspace: ${workspaceRoot}`,
@@ -1653,6 +1654,7 @@ class CyberbossApp {
       `📊 status: ${threadState?.status || "idle"}`,
       `🤖 runtime: ${runtimeName}`,
       `🤖 model: ${effectiveModel || "(default)"}`,
+      `🧠 effort: ${effectiveReasoningEffort || "(default)"}`,
       `🤖 provider: ${storedModelProvider || "(default)"}`,
     ];
     lines.push(formatContextStatusLine({

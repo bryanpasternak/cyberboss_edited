@@ -103,7 +103,7 @@ test("codex adapter reinitializes when the websocket transport has dropped", asy
   }
 });
 
-test("codex adapter lets configured env model override stored session model", async () => {
+test("codex adapter lets configured env model and effort override stored session defaults", async () => {
   const indexPath = path.resolve(__dirname, "../src/adapters/runtime/codex/index.js");
   const rpcClientPath = path.resolve(__dirname, "../src/adapters/runtime/codex/rpc-client.js");
   const mcpConfigPath = path.resolve(__dirname, "../src/adapters/runtime/codex/mcp-config.js");
@@ -183,6 +183,7 @@ test("codex adapter lets configured env model override stored session model", as
       stateDir: tempDir,
       codexModel: "gemma4:26b",
       codexModelProvider: "ollama",
+      codexReasoningEffort: "max",
     });
 
     const sessionStore = adapter.getSessionStore();
@@ -206,11 +207,21 @@ test("codex adapter lets configured env model override stored session model", as
     assert.equal(calls.startThread[0].modelProvider, "ollama");
     assert.equal(calls.sendUserMessage[0].model, "gemma4:26b");
     assert.equal(calls.sendUserMessage[0].modelProvider, "ollama");
+    assert.equal(calls.sendUserMessage[0].effort, "max");
+    assert.equal(adapter.describe().reasoningEffort, "max");
     assert.deepEqual(sessionStore.getRuntimeParamsForWorkspace("binding", workspaceRoot), {
       model: "gemma4:26b",
       modelProvider: "ollama",
     });
     assert.equal(sessionStore.getThreadIdForWorkspace("binding", workspaceRoot), "new-thread");
+
+    await adapter.refreshThreadInstructions({
+      threadId: "new-thread",
+      workspaceRoot,
+      model: "gemma4:26b",
+      modelProvider: "ollama",
+    });
+    assert.equal(calls.sendUserMessage.at(-1).effort, "max");
 
     calls.startThread.length = 0;
     calls.resumeThread.length = 0;
@@ -241,6 +252,7 @@ test("codex adapter lets configured env model override stored session model", as
     assert.equal(calls.resumeThread[0].modelProvider, "");
     assert.equal(calls.sendUserMessage[0].model, "");
     assert.equal(calls.sendUserMessage[0].modelProvider, "");
+    assert.equal(calls.sendUserMessage[0].effort, "");
 
     calls.startThread.length = 0;
     calls.resumeThread.length = 0;
@@ -259,6 +271,7 @@ test("codex adapter lets configured env model override stored session model", as
     assert.equal(calls.startThread[0].modelProvider, "");
     assert.equal(calls.sendUserMessage[0].model, "");
     assert.equal(calls.sendUserMessage[0].modelProvider, "");
+    assert.equal(calls.sendUserMessage[0].effort, "");
     assert.deepEqual(cloudSessionStore.getRuntimeParamsForWorkspace("binding", workspaceRoot), {
       model: "",
       modelProvider: "",

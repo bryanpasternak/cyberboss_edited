@@ -141,6 +141,7 @@ CYBERBOSS_CODEX_ENDPOINT=ws://127.0.0.1:8765
 CYBERBOSS_CODEX_COMMAND=
 CYBERBOSS_CODEX_MODEL=
 CYBERBOSS_CODEX_MODEL_PROVIDER=
+CYBERBOSS_CODEX_REASONING_EFFORT=
 CYBERBOSS_CODEX_NATIVE_IMAGE_INPUT=
 CYBERBOSS_CLAUDE_COMMAND=claude
 CYBERBOSS_CLAUDE_MODEL=
@@ -183,6 +184,8 @@ What these do:
   Force Codex turns to use a specific model. Leave empty to use Codex's default model selection.
 - `CYBERBOSS_CODEX_MODEL_PROVIDER`
   Force Codex turns to use a specific provider, such as `ollama` for local models. Leave empty for the default cloud provider.
+- `CYBERBOSS_CODEX_REASONING_EFFORT`
+  Force Codex turns to use a reasoning effort such as `low`, `high`, `xhigh`, `max`, or `ultra`. Availability depends on the selected model; leave it empty to use the Codex default.
 - `CYBERBOSS_CODEX_NATIVE_IMAGE_INPUT`
   Optional override for direct image input through the Codex app-server path. Leave empty to infer from model metadata; set `true` to test a local multimodal model directly, or `false` to force caption fallback.
 - `CYBERBOSS_CLAUDE_COMMAND`

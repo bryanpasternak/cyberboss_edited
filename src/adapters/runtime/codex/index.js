@@ -20,6 +20,7 @@ function createCodexRuntimeAdapter(config) {
   let readyState = null;
   const configuredModel = normalizeText(config.codexModel);
   const configuredModelProvider = normalizeText(config.codexModelProvider);
+  const configuredReasoningEffort = normalizeReasoningEffort(config.codexReasoningEffort);
 
   function resolveModel(model = "", storedParams = null) {
     if (configuredModel) {
@@ -53,6 +54,7 @@ function createCodexRuntimeAdapter(config) {
         sessionsFile: config.sessionsFile,
         model: configuredModel,
         modelProvider: configuredModelProvider,
+        reasoningEffort: configuredReasoningEffort,
       };
     },
     createClient() {
@@ -172,6 +174,7 @@ function createCodexRuntimeAdapter(config) {
         text: refreshText,
         model: desiredModel,
         modelProvider: configuredModelProvider,
+        effort: configuredReasoningEffort,
         workspaceRoot,
       });
       const result = await completion;
@@ -245,6 +248,7 @@ function createCodexRuntimeAdapter(config) {
         attachments,
         model: desiredModel,
         modelProvider: desiredModelProvider,
+        effort: configuredReasoningEffort,
         workspaceRoot,
       });
       return {
@@ -259,6 +263,19 @@ module.exports = { createCodexRuntimeAdapter };
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+const CODEX_REASONING_EFFORTS = new Set([
+  "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+]);
+
+function normalizeReasoningEffort(value) {
+  const effort = normalizeText(value).toLowerCase();
+  if (!effort) return "";
+  if (!CODEX_REASONING_EFFORTS.has(effort)) {
+    throw new Error(`unsupported Codex reasoning effort: ${effort}`);
+  }
+  return effort;
 }
 
 function runtimeParamsMatch(storedParams, desiredParams) {
