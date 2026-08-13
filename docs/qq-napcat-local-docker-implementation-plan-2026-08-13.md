@@ -231,6 +231,7 @@ feat: support QQ media through local Docker
 ## 9. 当前实施状态
 
 - 已完成：方案记录、基线确认、阶段 A（精确回复目标与 Telegram 白名单）、阶段 B（OneBot 文字通道）、阶段 C（身份绑定与同线程）、阶段 D 代码（本地 Docker 媒体收发）。
+- 已完成：本地 Docker Compose 模板与 Windows 操作说明，见 `deploy/napcat/README.md`。
 - 未完成：真实 NapCat 登录与端到端联调；需要本机 Docker 中的 QQ 登录态和实际 QQ 号才能验收。
 
 ## 10. 验证记录
@@ -241,3 +242,4 @@ feat: support QQ media through local Docker
 - QQ、文件路由、Telegram 分块、stream delivery 等目标回归共 59 项通过。
 - `turn-gate-store` 仍有 5 个既有测试夹具错误：测试对象未补 `buildNewThreadOpeningContext` 或 `captureRuntimeTurnResult`；本次 QQ 路径新增测试全部通过。
 - 项目文档审计发现 8 个既有 `docs/lmc5` 断链和缺少文档索引等警告；本实施方案没有新增本地链接。
+- 当前 PowerShell 找不到 `docker` 命令，因此 Compose 模板尚未经过本机 Docker 解析或实际启动；这是下一步本机联调的前置条件。
