@@ -20,7 +20,7 @@ test("desire service persists fed thoughts and snapshots intent", () => {
 
   assert.equal(snapshot.thoughtCount, 1);
   assert.equal(snapshot.thoughts[0].drive, "reflection");
-  assert.equal(snapshot.intent.wantAction, "none");
+  assert.equal(snapshot.intent.wantAction, "reach_out");
   assert.ok(fs.existsSync(path.join(dir, "desire-state.json")));
 });
 
@@ -72,4 +72,47 @@ test("desire system message is gated by the persisted driven flag", () => {
   service.toggleDriven(true);
   assert.match(service.buildDesireSystemMessage(), /Desire context:/);
   assert.doesNotMatch(service.buildDesireSystemMessage(), /想接着/);
+});
+
+test("check-in surfaces pending libido thoughts and does not resolve them", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-libido-checkin-"));
+  const service = createDesireService({
+    desireStateFile: path.join(dir, "desire-state.json"),
+    desireDriven: true,
+    desireThoughtMax: 80,
+    libidoConfig: {
+      timeZone: "Asia/Shanghai",
+      thoughtPromptThreshold: 0.4,
+      thoughtPromptCooldownHours: 4,
+      thoughtSurfaceLimit: 3,
+    },
+  });
+  service.feedThought("想抱住小鱿亲她", "libido", "flit", 0.7, "anticipation");
+
+  const prepared = service.prepareCheckinContext(Date.parse("2026-08-09T20:00:00+08:00"));
+  const state = service.getState();
+
+  assert.match(prepared.message, /想抱住小鱿亲她/);
+  assert.match(prepared.message, /回味你和苏苏亲吻、抚摸和做爱时留下的感觉/);
+  assert.match(prepared.message, /鸡巴插进去以后被穴肉包裹/);
+  assert.match(prepared.message, /水煎小鱿/);
+  assert.equal(state.thoughts[0].status, "pending");
+  assert.equal(state.thoughts[0].surfacedCount, 1);
+});
+
+test("recording user activity and completed sex persists explicit libido events", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-libido-events-"));
+  const service = new DesireService({
+    store: new DesireStore({ filePath: path.join(dir, "desire-state.json") }),
+  });
+  const userAt = Date.parse("2026-08-09T12:00:00+08:00");
+  const sexAt = Date.parse("2026-08-09T23:00:00+08:00");
+
+  service.recordUserActivity(userAt);
+  service.recordLibidoEvent("sex_completed", [], sexAt);
+  const state = service.getState();
+
+  assert.equal(state.libidoState.lastUserAt, userAt);
+  assert.equal(state.libidoState.lastSexAt, sexAt);
+  assert.equal(state.drive.libido, 0.08);
 });

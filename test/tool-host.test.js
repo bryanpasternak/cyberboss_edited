@@ -40,14 +40,15 @@ function createHost() {
         getSnapshot() {
           return this.snapshot;
         },
-        feedThought(text, drive, kind, strength) {
+        feedThought(text, drive, kind, strength, flavor) {
+          const thought = { id: "thought-1", text, drive, kind, strength, flavor, status: "pending" };
           this.snapshot = {
             ...this.snapshot,
             state: {
               ...this.snapshot.state,
-              thoughts: [{ text, drive, kind, strength }],
+              thoughts: [thought],
             },
-            thoughts: [{ text, drive, kind, strength }],
+            thoughts: [thought],
             thoughtCount: 1,
           };
           return this.snapshot.state;
@@ -70,10 +71,34 @@ function createHost() {
           };
           return this.snapshot.state;
         },
+        resolveThought(thoughtId, resolution) {
+          this.snapshot = { ...this.snapshot, resolvedThought: { thoughtId, resolution } };
+          return this.snapshot.state;
+        },
+        recordLibidoEvent(event, thoughtIds) {
+          this.snapshot = { ...this.snapshot, libidoEvent: { event, thoughtIds } };
+          return this.snapshot.state;
+        },
+      },
+      memento: {
+        list() { return [{ id: "gift-1", type: "gift", status: "wrapped" }]; },
+        read({ id }) { return { id, type: "gift", status: "wrapped" }; },
+      },
+      gift: {
+        send() { return { id: "gift-1", type: "gift", status: "wrapped", callbackData: "gift:open:gift-1" }; },
+        open({ id }) { return { id, type: "gift", status: "opened", publicData: { giftName: "月亮" } }; },
+        collect({ id }) { return { id, type: "gift", status: "collected" }; },
+      },
+      postcard: {
+        send() { return { id: "postcard-1", type: "postcard", publicData: { side: "front" }, callbackData: "postcard:flip:postcard-1:back" }; },
+        flip({ id, side }) { return { id, type: "postcard", publicData: { side: side || "back" } }; },
+      },
+      travelCard: {
+        create() { return { id: "travel-1", type: "travel_card", status: "collected" }; },
       },
       channelFile: {
-        async sendToCurrentChat(args) {
-          return { filePath: args.filePath, userId: args.userId || "user-1" };
+        async sendToCurrentChat(args, context) {
+          return { filePath: args.filePath, userId: args.userId || "user-1", context };
         },
       },
       sticker: {
@@ -272,7 +297,7 @@ test("tool host exposes structured timeline read tools", async () => {
   assert.equal(proposalsResult.text, "Timeline proposals loaded: 1.");
 });
 
-test("tool host exposes desire state, feed, control, and satisfy tools", async () => {
+test("tool host exposes desire, thought lifecycle, and libido event tools", async () => {
   const host = createHost();
   const stateResult = await host.invokeTool("cyberboss_desire_state", {}, {});
   const feedResult = await host.invokeTool("cyberboss_desire_feed", {
@@ -286,14 +311,48 @@ test("tool host exposes desire state, feed, control, and satisfy tools", async (
   const satisfyResult = await host.invokeTool("cyberboss_desire_satisfy", {
     action: "web_search",
   }, {});
+  const resolveResult = await host.invokeTool("cyberboss_desire_thought_resolve", {
+    thoughtId: "thought-1",
+    resolution: "journaled",
+  }, {});
+  const libidoResult = await host.invokeTool("cyberboss_libido_event", {
+    event: "sex_completed",
+    thoughtIds: ["thought-1"],
+  }, {});
 
   assert.equal(stateResult.text, "Desire state: intent=web_search drive=curiosity score=0.50");
   assert.equal(feedResult.text, "Thought fed: 想看看外面有什么新东西");
   assert.equal(feedResult.data.thoughtCount, 1);
+  assert.equal(feedResult.data.thoughtId, "thought-1");
   assert.equal(controlResult.text, "Desire-driven behavior enabled.");
   assert.equal(controlResult.data.drivenBehaviorEnabled, true);
   assert.equal(satisfyResult.text, "Desire satisfied: web_search");
   assert.equal(satisfyResult.data.satisfiedAction, "web_search");
+  assert.deepEqual(resolveResult.data.resolvedThought, { thoughtId: "thought-1", resolution: "journaled" });
+  assert.deepEqual(libidoResult.data.libidoEvent, { event: "sex_completed", thoughtIds: ["thought-1"] });
+});
+
+test("tool host exposes independent gift, postcard, travel card, and cabinet tools", async () => {
+  const host = createHost();
+  const gift = await host.invokeTool("cyberboss_gift_send", { giftName: "月亮" }, {});
+  const opened = await host.invokeTool("cyberboss_gift_open", { id: "gift-1" }, {});
+  const collected = await host.invokeTool("cyberboss_gift_collect", { id: "gift-1" }, {});
+  const postcard = await host.invokeTool("cyberboss_postcard_send", { message: "想你。" }, {});
+  const flipped = await host.invokeTool("cyberboss_postcard_flip", { id: "postcard-1", side: "back" }, {});
+  const travel = await host.invokeTool("cyberboss_travel_card_create", {
+    place: "月球", moment: "一起看地球。", mode: "if",
+  }, {});
+  const list = await host.invokeTool("cyberboss_memento_list", {}, {});
+  const read = await host.invokeTool("cyberboss_memento_read", { id: "gift-1" }, {});
+
+  assert.equal(gift.data.status, "wrapped");
+  assert.equal(opened.data.publicData.giftName, "月亮");
+  assert.equal(collected.data.status, "collected");
+  assert.equal(postcard.data.publicData.side, "front");
+  assert.equal(flipped.data.publicData.side, "back");
+  assert.equal(travel.data.type, "travel_card");
+  assert.equal(list.data.count, 1);
+  assert.equal(read.data.id, "gift-1");
 });
 
 test("tool host validates structured reminder input types", async () => {
@@ -362,6 +421,24 @@ test("tool host accepts structured timeline screenshot input", async () => {
   }, {});
   assert.equal(result.text, "Timeline screenshot sent: /tmp/shot.png");
   assert.equal(result.data.delivery.filePath, "/tmp/shot.png");
+});
+
+test("channel send file receives the resolved runtime channel context", async () => {
+  const host = createHost();
+  host.runtimeContextStore.resolveActiveContext = () => ({
+    senderId: "susu",
+    provider: "telegram",
+    channelId: "telegram",
+    externalUserId: "12345",
+    contextToken: "tg:12345",
+  });
+  const result = await host.invokeTool("cyberboss_channel_send_file", {
+    filePath: "/tmp/report.pdf",
+  }, {});
+  assert.equal(result.data.context.channelId, "telegram");
+  assert.equal(result.data.context.externalUserId, "12345");
+  const spec = host.listTools().find((tool) => tool.name === "cyberboss_channel_send_file");
+  assert.doesNotMatch(spec.description, /current WeChat chat/i);
 });
 
 test("tool host descriptions include schema summary for models that only surface descriptions", () => {

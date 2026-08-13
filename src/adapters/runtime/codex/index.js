@@ -191,6 +191,9 @@ function createCodexRuntimeAdapter(config) {
       const storedParams = sessionStore.getRuntimeParamsForWorkspace(bindingKey, workspaceRoot);
       const desiredModel = resolveModel(model, storedParams);
       const desiredModelProvider = configuredModelProvider;
+      const desiredReasoningEffort = normalizeReasoningEffort(
+        storedParams.reasoningEffort || configuredReasoningEffort
+      );
       if (threadId && !runtimeParamsMatch(storedParams, {
         model: desiredModel,
         modelProvider: desiredModelProvider,
@@ -248,7 +251,7 @@ function createCodexRuntimeAdapter(config) {
         attachments,
         model: desiredModel,
         modelProvider: desiredModelProvider,
-        effort: configuredReasoningEffort,
+        effort: desiredReasoningEffort,
         workspaceRoot,
       });
       return {

@@ -9,7 +9,7 @@ const { createTelegramChannelAdapter } = require("../adapters/channel/telegram")
 const { persistIncomingTelegramAttachments } = require("../adapters/channel/telegram/media-receive");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { createClaudeCodeRuntimeAdapter } = require("../adapters/runtime/claudecode");
-const { findModelByQuery } = require("../adapters/runtime/codex/model-catalog");
+const { findModelByQuery, resolveEffectiveModelForEffort } = require("../adapters/runtime/codex/model-catalog");
 const { createTimelineIntegration } = require("../integrations/timeline");
 const {
   assembleRuntimeTurnText,
@@ -112,6 +112,9 @@ class CyberbossApp {
     this.timelineIntegration = createTimelineIntegration(config);
     const projectTooling = createProjectTooling(config, {
       channelAdapter: this.channelAdapter,
+      channels: this.channels,
+      identityMapStore: this.identityMapStore,
+      lastActiveStore: this.lastActiveChannelStore,
       timelineIntegration: this.timelineIntegration,
     });
     this.projectServices = projectTooling.services;
@@ -158,7 +161,6 @@ class CyberbossApp {
     });
     this.pendingOperationByRunKey = new Map();
     this.autoCompactService = new AutoCompactService({ config });
-    this.pendingDesireActionByRunKey = new Map();
     this._aiReplyTextAccumulator = new Map();
     this._chatMemoryReplyAccumulator = new Map();
     this.runtimeEventChain = Promise.resolve();
@@ -581,6 +583,10 @@ class CyberbossApp {
       channelId: sourceChannelId,
     });
 
+    if (this.projectServices?.desire && normalized.provider !== "system") {
+      this.projectServices.desire.recordUserActivity(normalized.receivedAt || Date.now());
+    }
+
     const command = parseChannelCommand(normalized.text);
     if (allowCommands && command) {
       await this.dispatchChannelCommand(normalized, command, { channelId: sourceChannelId, channel: sourceChannel });
@@ -675,6 +681,20 @@ class CyberbossApp {
       const sendTurn = typeof this.runtimeAdapter.sendTurn === "function"
         ? this.runtimeAdapter.sendTurn.bind(this.runtimeAdapter)
         : this.runtimeAdapter.sendTextTurn.bind(this.runtimeAdapter);
+      const runtimeSessionStore = this.runtimeAdapter.getSessionStore();
+      const existingThreadId = runtimeSessionStore.getThreadIdForWorkspace?.(bindingKey, workspaceRoot) || "";
+      this.runtimeContextStore?.setActiveContext?.({
+        workspaceRoot,
+        runtimeId: this.runtimeAdapter.describe().id,
+        threadId: existingThreadId,
+        bindingKey,
+        accountId: prepared.accountId,
+        senderId: prepared.senderId,
+        provider: prepared.provider,
+        channelId: prepared.channelId || prepared.provider,
+        externalUserId: prepared.chatId || prepared.externalSenderId || "",
+        contextToken: prepared.contextToken,
+      });
       const turn = await sendTurn({
         bindingKey,
         workspaceRoot,
@@ -698,13 +718,6 @@ class CyberbossApp {
       }).catch((error) => {
         console.warn(`[chat-memory] turn link failed: ${error.message}`);
       });
-      const desireAction = prepared?.provider === "system" ? extractDesireActionFromSystemText(runtimeTurn.text) : "";
-      if (desireAction) {
-        this.pendingDesireActionByRunKey.set(buildRunKey(turn.threadId, turn.turnId), desireAction);
-        if (turn.turnId) {
-          this.pendingDesireActionByRunKey.set(buildRunKey(turn.threadId, ""), desireAction);
-        }
-      }
       this.runtimeContextStore?.setActiveContext?.({
         workspaceRoot,
         runtimeId: this.runtimeAdapter.describe().id,
@@ -712,6 +725,10 @@ class CyberbossApp {
         bindingKey,
         accountId: prepared.accountId,
         senderId: prepared.senderId,
+        provider: prepared.provider,
+        channelId: prepared.channelId || prepared.provider,
+        externalUserId: prepared.chatId || prepared.externalSenderId || "",
+        contextToken: prepared.contextToken,
       });
       this.turnGateStore.attachThread(pendingScopeKey, turn.threadId);
       const replyTarget = {
@@ -1408,6 +1425,9 @@ class CyberbossApp {
         case "model":
           await this.handleModelCommand(normalized, command);
           return;
+        case "effort":
+          await this.handleEffortCommand(normalized, command);
+          return;
         case "star":
           await this.handleStarCommand(normalized);
           return;
@@ -1646,7 +1666,9 @@ class CyberbossApp {
     const storedModel = runtimeParams.model || "";
     const storedModelProvider = runtimeParams.modelProvider || this.runtimeAdapter.describe().modelProvider || "";
     const effectiveModel = this.runtimeAdapter.describe().model || storedModel;
-    const effectiveReasoningEffort = this.runtimeAdapter.describe().reasoningEffort || "";
+    const effectiveReasoningEffort = runtimeParams.reasoningEffort
+      || this.runtimeAdapter.describe().reasoningEffort
+      || "";
 
     const lines = [
       `📍 workspace: ${workspaceRoot}`,
@@ -2266,6 +2288,69 @@ class CyberbossApp {
     });
   }
 
+  async handleEffortCommand(normalized, command) {
+    const runtime = this.runtimeAdapter.describe();
+    if (runtime.id !== "codex") {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: "❌ /effort is only available with the Codex runtime",
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const sessionStore = this.runtimeAdapter.getSessionStore();
+    const bindingKey = sessionStore.buildBindingKey({
+      workspaceId: normalized.workspaceId,
+      accountId: normalized.accountId,
+      senderId: normalized.senderId,
+    });
+    const workspaceRoot = this.resolveWorkspaceRoot(bindingKey);
+    const runtimeParams = sessionStore.getRuntimeParamsForWorkspace(bindingKey, workspaceRoot);
+    const catalog = sessionStore.getAvailableModelCatalog();
+    const effectiveModel = resolveEffectiveModelForEffort(
+      catalog?.models || [],
+      runtime.model || runtimeParams.model
+    );
+    const supported = (effectiveModel?.supportedReasoningEfforts || [])
+      .map((value) => normalizeCommandName(value));
+    const requested = normalizeCommandName(normalizeCommandArgument(command.args));
+    const current = runtimeParams.reasoningEffort || runtime.reasoningEffort || "";
+
+    if (!requested) {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: [
+          `Current effort: ${current || "(default)"}`,
+          `Model: ${effectiveModel?.model || runtime.model || runtimeParams.model || "(default)"}`,
+          `Available efforts: ${supported.length ? supported.join(", ") : "minimal, low, medium, high, xhigh, max, ultra"}`,
+          "Usage: /effort <level>",
+        ].join("\n"),
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    const knownEfforts = new Set(["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]);
+    if (!knownEfforts.has(requested) || (supported.length && !supported.includes(requested))) {
+      await this.currentChannel.sendText({
+        userId: normalized.senderId,
+        text: `❌ Unsupported effort for ${effectiveModel?.model || "the current model"}\n${supported.length ? supported.join(", ") : [...knownEfforts].join(", ")}`,
+        contextToken: normalized.contextToken,
+      });
+      return;
+    }
+
+    sessionStore.setRuntimeParamsForWorkspace(bindingKey, workspaceRoot, {
+      reasoningEffort: requested,
+    });
+    await this.currentChannel.sendText({
+      userId: normalized.senderId,
+      text: `✅ Reasoning effort switched\nworkspace: ${workspaceRoot}\neffort: ${requested}\nApplies from the next turn.`,
+      contextToken: normalized.contextToken,
+    });
+  }
+
   async handleStarCommand(normalized) {
     await this.currentChannel.sendText({
       userId: normalized.senderId,
@@ -2290,40 +2375,6 @@ class CyberbossApp {
       text: buildChannelHelpText(channelId),
       contextToken: normalized.contextToken,
     });
-  }
-
-  takePendingDesireAction(threadId, turnId) {
-    if (!this.pendingDesireActionByRunKey || typeof this.pendingDesireActionByRunKey.get !== "function") {
-      return "";
-    }
-    const keys = [
-      buildRunKey(threadId, turnId),
-      buildRunKey(threadId, ""),
-    ];
-    for (const key of keys) {
-      const action = this.pendingDesireActionByRunKey.get(key);
-      if (!action) {
-        continue;
-      }
-      for (const candidate of keys) {
-        this.pendingDesireActionByRunKey.delete(candidate);
-      }
-      return action;
-    }
-    return "";
-  }
-
-  satisfyDesireAction(action) {
-    if (!isKnownDesireAction(action) || !this.projectServices?.desire) {
-      return;
-    }
-    try {
-      this.projectServices.desire.satisfyAction(action);
-      console.log(`[cyberboss] desire satisfied action=${action}`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error || "unknown error");
-      console.warn(`[cyberboss] desire satisfy failed action=${action}: ${message}`);
-    }
   }
 
   resolveWorkspaceRoot(bindingKey) {
@@ -2536,9 +2587,6 @@ class CyberbossApp {
       if (pendingOperation && pendingOperations?.delete) {
         pendingOperations.delete(completedRunKey);
       }
-      const pendingDesireAction = typeof this.takePendingDesireAction === "function"
-        ? this.takePendingDesireAction(event.payload.threadId, event.payload.turnId)
-        : "";
       const sessionStore = this.runtimeAdapter.getSessionStore();
       sessionStore.clearApprovalPrompt(event.payload.threadId);
       const linked = sessionStore.findBindingForThreadId(event.payload.threadId);
@@ -2567,8 +2615,6 @@ class CyberbossApp {
             event.payload.text || "❌ Execution failed",
             failureReplyTarget,
           );
-        } else if (pendingDesireAction && typeof this.satisfyDesireAction === "function") {
-          this.satisfyDesireAction(pendingDesireAction);
         }
         if (linked?.bindingKey && linked?.workspaceRoot) {
           await this.flushPendingInboundMessages({
@@ -2930,13 +2976,22 @@ function buildDesireStateText(snapshot) {
     "",
     `thoughts: ${thoughts.length}`,
   ];
-  const preview = thoughts.slice(0, 5).map((thought) => {
-    const kind = thought.kind === "fixation" ? "*" : "-";
-    return `${kind} ${normalizeText(thought.text).slice(0, 36)} (${thought.drive} ${formatDrivePercent(thought.strength)})`;
-  });
-  if (preview.length) {
-    lines.push(...preview);
+  if (thoughts.length) {
+    thoughts.forEach((thought, index) => {
+      const id = normalizeText(thought.id) || "-";
+      const driveKey = normalizeText(thought.drive) || "unknown";
+      const kind = thought.kind === "fixation" ? "fixation" : "flit";
+      const status = thought.status === "resolved" ? "resolved" : "pending";
+      const resolution = normalizeText(thought.resolution);
+      lines.push(
+        "",
+        `[${index + 1}] ${normalizeText(thought.text) || "(empty thought)"}`,
+        `    id: ${id}`,
+        `    drive: ${driveKey} | kind: ${kind} | strength: ${formatDrivePercent(thought.strength)} | status: ${status}${resolution ? ` (${resolution})` : ""}`,
+      );
+    });
   }
+
   return lines.join("\n");
 }
 
@@ -2950,16 +3005,6 @@ function buildDesireUsageText() {
     "/desire feed <drive> [flit|fixation] <text>",
     "/desire satisfy <web_browse|reach_out|reflect|follow_up|seduce|vent|none>",
   ].join("\n");
-}
-
-function extractDesireActionFromSystemText(text) {
-  const normalized = normalizeText(text);
-  if (!normalized.includes("Desire context:")) {
-    return "";
-  }
-  const match = normalized.match(/\baction=([a-z_]+)/i);
-  const action = normalizeCommandArgument(match?.[1] || "");
-  return isKnownDesireAction(action) ? action : "";
 }
 
 function isKnownDesireAction(action) {

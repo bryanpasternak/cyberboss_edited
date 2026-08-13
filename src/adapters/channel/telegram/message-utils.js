@@ -163,6 +163,55 @@ function extractAttachmentItems(message) {
     });
   }
 
+  if (message.audio?.file_id) {
+    const audio = message.audio;
+    out.push({
+      kind: "audio",
+      itemType: "audio",
+      index: index++,
+      fileId: String(audio.file_id),
+      fileName: typeof audio.file_name === "string" && audio.file_name.trim()
+        ? audio.file_name.trim()
+        : `tg-audio-${message.message_id || Date.now()}.mp3`,
+      sizeBytes: Number(audio.file_size) || 0,
+      directUrls: [],
+      mediaRef: { mimeType: audio.mime_type || "", duration: Number(audio.duration) || 0 },
+      rawItem: audio,
+    });
+  }
+
+  if (message.animation?.file_id) {
+    const animation = message.animation;
+    out.push({
+      kind: "animation",
+      itemType: "animation",
+      index: index++,
+      fileId: String(animation.file_id),
+      fileName: typeof animation.file_name === "string" && animation.file_name.trim()
+        ? animation.file_name.trim()
+        : `tg-animation-${message.message_id || Date.now()}.gif`,
+      sizeBytes: Number(animation.file_size) || 0,
+      directUrls: [],
+      mediaRef: { mimeType: animation.mime_type || "" },
+      rawItem: animation,
+    });
+  }
+
+  if (message.video_note?.file_id) {
+    const videoNote = message.video_note;
+    out.push({
+      kind: "video",
+      itemType: "video_note",
+      index: index++,
+      fileId: String(videoNote.file_id),
+      fileName: `tg-video-note-${message.message_id || Date.now()}.mp4`,
+      sizeBytes: Number(videoNote.file_size) || 0,
+      directUrls: [],
+      mediaRef: { duration: Number(videoNote.duration) || 0 },
+      rawItem: videoNote,
+    });
+  }
+
   if (message.sticker?.file_id) {
     const sticker = message.sticker;
     out.push({
@@ -186,7 +235,7 @@ function detectKindFromMime(mimeType) {
   if (!value) return "";
   if (value.startsWith("image/")) return "image";
   if (value.startsWith("video/")) return "video";
-  if (value.startsWith("audio/")) return "voice";
+  if (value.startsWith("audio/")) return "audio";
   return "file";
 }
 
@@ -205,4 +254,4 @@ function pruneSeen(seen) {
   }
 }
 
-module.exports = { createInboundFilter };
+module.exports = { createInboundFilter, extractAttachmentItems };

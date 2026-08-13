@@ -317,6 +317,7 @@ test("handlePreparedMessage queues while the scope is in a turn-boundary handoff
 test("dispatchPreparedTurn binds reply target to the explicit turn id when runtime returns one", async () => {
   const turnBindings = [];
   const queuedBindings = [];
+  const runtimeContexts = [];
   const order = [];
   const appLike = {
     channelAdapter: {
@@ -340,7 +341,12 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
       releaseScope() {},
     },
     runtimeAdapter: {
+      describe() {
+        return { id: "codex" };
+      },
       async sendTextTurn() {
+        assert.equal(runtimeContexts.length, 1, "delivery context must exist before the runtime can call tools");
+        assert.equal(runtimeContexts[0].channelId, "telegram");
         return { threadId: "thread-1", turnId: "turn-1" };
       },
       getSessionStore() {
@@ -365,6 +371,11 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
         queuedBindings.push({ threadId, target });
       },
     },
+    runtimeContextStore: {
+      setActiveContext(context) {
+        runtimeContexts.push(context);
+      },
+    },
   };
 
   const dispatched = await CyberbossApp.prototype.dispatchPreparedTurn.call(appLike, {
@@ -374,20 +385,23 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
       workspaceId: "default",
       accountId: "acc-1",
       senderId: "user-1",
-      contextToken: "ctx-1",
-      provider: "system",
+      contextToken: "tg:123",
+      provider: "telegram",
+      chatId: "123",
       text: "ping",
     },
   });
 
   assert.equal(dispatched, true);
+  assert.equal(runtimeContexts.length, 2);
+  assert.equal(runtimeContexts[1].threadId, "thread-1");
   assert.deepEqual(turnBindings, [{
     threadId: "thread-1",
     turnId: "turn-1",
     target: {
       userId: "user-1",
-      contextToken: "ctx-1",
-      provider: "system",
+      contextToken: "tg:123",
+      provider: "telegram",
     },
   }]);
   assert.deepEqual(queuedBindings, []);

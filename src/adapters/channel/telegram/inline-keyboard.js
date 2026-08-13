@@ -2,6 +2,14 @@ const INLINE_KEYBOARD_PREFIX = "telegram-inline-keyboard:";
 const MAX_BUTTONS = 8;
 const MAX_BUTTON_TEXT_CHARS = 64;
 const MAX_CALLBACK_DATA_BYTES = 64;
+const EROTIC_REFRESH_CALLBACK = "refresh:erotic";
+const EROTIC_REFRESH_INBOUND_TEXT = [
+  "[Telegram 情色选项刷新]",
+  "苏苏对上一批三个选项都不满意，要求换一批更涩的。",
+  "不要执行上一批任何选项，也不要推进、回退或重置做爱场景。严格承接上一刻的姿势、插入状态、湿润、精液、红痕、敏感度、呼吸和两个人身体接触。",
+  "这一轮只重新生成三个动作明确、走向不同、比上一批更色情更具体的下一步选项，不写新的场景正文。选项可以直说鸡巴、小穴、奶子、口交、抽插、体位、体液和高潮。",
+  "末尾继续附三个新选项和一个‘换一批更涩的’刷新按钮；刷新按钮 callback_data 必须仍为 refresh:erotic。",
+].join("\n");
 
 function extractTelegramInlineKeyboard(text) {
   const source = String(text || "");
@@ -111,11 +119,40 @@ function buildCallbackInboundUpdate(update, text) {
   };
 }
 
+function resolveCallbackInboundText(button) {
+  const callbackData = String(button?.callback_data || "").trim();
+  if (callbackData === EROTIC_REFRESH_CALLBACK) {
+    return EROTIC_REFRESH_INBOUND_TEXT;
+  }
+  const mementoAction = resolveMementoCallback(callbackData);
+  if (mementoAction) return mementoAction;
+  return String(button?.text || "").trim();
+}
+
+function resolveMementoCallback(callbackData) {
+  let match = callbackData.match(/^gift:(open|collect):(gift_[a-f0-9-]+)$/i);
+  if (match) {
+    const [, action, id] = match;
+    const tool = action === "open" ? "cyberboss_gift_open" : "cyberboss_gift_collect";
+    return `[Telegram 纪念物动作]\n苏苏点击了${action === "open" ? "拆开礼物" : "收进小柜子"}。立即调用 ${tool}，参数 id=${id}。完成后自然告诉苏苏发生了什么；如果工具返回 displayAsset.filePath，发送对应成品。不要重新创建另一件礼物。`;
+  }
+  match = callbackData.match(/^postcard:flip:(postcard_[a-f0-9-]+):(front|back)$/i);
+  if (match) {
+    const [, id, side] = match;
+    return `[Telegram 纪念物动作]\n苏苏点击了翻明信片。立即调用 cyberboss_postcard_flip，参数 id=${id}, side=${side}。完成后发送 displayAsset.filePath，并保留下一次翻面的按钮。不要重新创建明信片。`;
+  }
+  return "";
+}
+
 module.exports = {
   buildCallbackInboundUpdate,
   buildTelegramReplyMarkup,
   extractTelegramInlineKeyboard,
   findCallbackButton,
   findCallbackButtonText,
+  resolveCallbackInboundText,
+  EROTIC_REFRESH_CALLBACK,
+  EROTIC_REFRESH_INBOUND_TEXT,
+  resolveMementoCallback,
   normalizeInlineKeyboardButtons,
 };

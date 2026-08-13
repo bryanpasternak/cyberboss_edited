@@ -118,130 +118,52 @@ test("handleDesireCommand feeds and satisfies thoughts from channel commands", a
     senderId: "user-1",
     contextToken: "ctx-1",
   }, {
-    args: "satisfy web_search",
+    args: "satisfy web_browse",
   });
 
   assert.deepEqual(service.calls[0], ["feed", "想看看外面有什么新东西", "curiosity", "fixation", 0.8]);
-  assert.deepEqual(service.calls[1], ["satisfy", "web_search"]);
+  assert.deepEqual(service.calls[1], ["satisfy", "web_browse"]);
   assert.match(sent[0].text, /Thought fed/);
-  assert.match(sent[1].text, /Satisfied action: web_search/);
+  assert.match(sent[1].text, /Satisfied action: web_browse/);
 });
 
-test("dispatchPreparedTurn records desire action for system turns", async () => {
-  const appLike = {
-    channelAdapter: {
-      async sendTyping() {},
-      async sendText() {},
-    },
-    resolveChannelById() {
-      return null;
-    },
-    resolveChannelForSender() {
-      return this.channelAdapter;
-    },
-    turnGateStore: {
-      begin() {
-        return "binding-1::/workspace";
-      },
-      attachThread() {},
-      releaseScope() {},
-    },
-    runtimeAdapter: {
-      async sendTextTurn() {
-        return { threadId: "thread-1", turnId: "turn-1" };
-      },
-      getSessionStore() {
-        return {
-          getRuntimeParamsForWorkspace() {
-            return { model: "" };
-          },
-        };
-      },
-      describe() {
-        return { id: "codex" };
-      },
-    },
-    runtimeContextStore: {
-      setActiveContext() {},
-    },
-    async buildRuntimeTurn() {
-      return {
-        text: "Desire context: curiosity(0.80) is currently pulling me toward action=web_search. 我想探索外面的世界。",
-        attachments: [],
-      };
-    },
-    streamDelivery: {
-      bindReplyTargetForTurn() {},
-      queueReplyTargetForThread() {},
-    },
-    pendingDesireActionByRunKey: new Map(),
-  };
-
-  const dispatched = await CyberbossApp.prototype.dispatchPreparedTurn.call(appLike, {
-    bindingKey: "binding-1",
-    workspaceRoot: "/workspace",
-    prepared: {
-      workspaceId: "default",
-      accountId: "acc-1",
-      senderId: "user-1",
-      contextToken: "ctx-1",
-      provider: "system",
-      text: "system text",
-    },
-  });
-
-  assert.equal(dispatched, true);
-  assert.equal(appLike.pendingDesireActionByRunKey.get("thread-1:turn-1"), "web_search");
-  assert.equal(appLike.pendingDesireActionByRunKey.get("thread-1:"), "web_search");
+test("system turns have no automatic desire satisfaction hook", () => {
+  assert.equal(CyberbossApp.prototype.takePendingDesireAction, undefined);
+  assert.equal(CyberbossApp.prototype.satisfyDesireAction, undefined);
 });
 
-test("handleRuntimeEvent satisfies recorded desire actions on completed turns", async () => {
-  const calls = [];
+test("/desire displays every thought with complete untruncated text", async () => {
+  const sent = [];
+  const service = createDesireService();
+  const thoughts = Array.from({ length: 7 }, (_, index) => ({
+    id: `thought-${index + 1}`,
+    text: `第${index + 1}条完整念头：${"很长的身体感受和欲望内容".repeat(8)}`,
+    drive: "libido",
+    kind: index === 6 ? "fixation" : "flit",
+    strength: 0.5 + (index * 0.01),
+    status: index === 0 ? "resolved" : "pending",
+    resolution: index === 0 ? "journaled" : "",
+  }));
+  service.snapshot = {
+    ...service.snapshot,
+    thoughts,
+    thoughtCount: thoughts.length,
+    state: { ...service.snapshot.state, thoughts },
+  };
   const appLike = {
-    pendingDesireActionByRunKey: new Map([
-      ["thread-1:turn-1", "web_search"],
-      ["thread-1:", "web_search"],
-    ]),
-    projectServices: {
-      desire: {
-        satisfyAction(action) {
-          calls.push(action);
-        },
-      },
+    projectServices: { desire: service },
+    currentChannel: {
+      async sendText(payload) { sent.push(payload); },
     },
-    streamDelivery: {
-      async handleRuntimeEvent() {},
-    },
-    runtimeAdapter: {
-      getSessionStore() {
-        return {
-          clearApprovalPrompt() {},
-          findBindingForThreadId() {
-            return null;
-          },
-        };
-      },
-    },
-    turnGateStore: {
-      releaseThread() {},
-      isPending() {
-        return false;
-      },
-    },
-    turnBoundaryScopeKeys: new Set(),
-    async flushPendingInboundMessages() {},
-    async flushPendingSystemMessages() {},
-    async stopTypingForThread() {},
-    takePendingDesireAction: CyberbossApp.prototype.takePendingDesireAction,
-    satisfyDesireAction: CyberbossApp.prototype.satisfyDesireAction,
   };
 
-  await CyberbossApp.prototype.handleRuntimeEvent.call(appLike, {
-    type: "runtime.turn.completed",
-    payload: { threadId: "thread-1", turnId: "turn-1" },
-  });
+  await CyberbossApp.prototype.handleDesireCommand.call(appLike, {
+    senderId: "user-1",
+    contextToken: "ctx-1",
+  }, { args: "" });
 
-  assert.deepEqual(calls, ["web_search"]);
-  assert.equal(appLike.pendingDesireActionByRunKey.has("thread-1:turn-1"), false);
-  assert.equal(appLike.pendingDesireActionByRunKey.has("thread-1:"), false);
+  assert.match(sent[0].text, /thoughts: 7/);
+  assert.match(sent[0].text, /\[7\] 第7条完整念头/);
+  assert.match(sent[0].text, new RegExp(thoughts[6].text));
+  assert.match(sent[0].text, /status: resolved \(journaled\)/);
 });

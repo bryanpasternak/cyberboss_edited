@@ -58,6 +58,10 @@ class ProjectToolHost {
       bindingKey: normalizeText(context.bindingKey) || normalizeText(active.bindingKey),
       accountId: normalizeText(context.accountId) || normalizeText(active.accountId),
       senderId: normalizeText(context.senderId) || normalizeText(active.senderId),
+      provider: normalizeText(context.provider) || normalizeText(active.provider),
+      channelId: normalizeText(context.channelId) || normalizeText(active.channelId),
+      externalUserId: normalizeText(context.externalUserId) || normalizeText(active.externalUserId),
+      contextToken: normalizeText(context.contextToken) || normalizeText(active.contextToken),
     };
   }
 }
@@ -132,6 +136,164 @@ const PROJECT_TOOLS = [
         text: `Diary appended to ${result.filePath}`,
         data: result,
       };
+    },
+  },
+  {
+    name: "cyberboss_memento_list",
+    description: "Open the shared keepsake cabinet and list saved gifts, postcards, and travel cards. Gift secrets stay hidden until opened.",
+    shortHint: "List saved keepsakes.",
+    topics: ["memento"],
+    inputSchema: {
+      type: "object",
+      properties: {
+        type: { type: "string", description: "Optional: gift, postcard, or travel_card." },
+        status: { type: "string", description: "Optional status filter." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const items = services.memento.list({ ...args, viewerId: context.senderId || "susu" });
+      return { text: `Memento cabinet: ${items.length} items.`, data: { count: items.length, items } };
+    },
+  },
+  {
+    name: "cyberboss_memento_read",
+    description: "Read one keepsake by id through its public view. Wrapped gifts do not reveal their secret contents.",
+    shortHint: "Read one saved keepsake.",
+    topics: ["memento"],
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" } },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const item = services.memento.read({ id: args.id, viewerId: context.senderId || "susu" });
+      return { text: `Memento loaded: ${item.id} (${item.type}, ${item.status}).`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_gift_send",
+    description: "Create a wrapped gift for 苏苏. The tool returns only the wrapping, teaser, image, and open callback; giftName, description, and letter remain hidden until cyberboss_gift_open.",
+    shortHint: "Wrap a secret gift for 苏苏.",
+    topics: ["memento", "gift"],
+    inputSchema: {
+      type: "object",
+      required: ["giftName"],
+      properties: {
+        giftName: { type: "string" },
+        description: { type: "string" },
+        letter: { type: "string" },
+        label: { type: "string" },
+        teaser: { type: "string" },
+        wrappingStyle: { type: "string" },
+        createdBy: { type: "string" },
+        givenTo: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const item = services.gift.send({ createdBy: "moonlet", givenTo: "susu", ...args });
+      return { text: `Wrapped gift created: ${item.id}. Send displayAsset.filePath, then offer callback ${item.callbackData}.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_gift_open",
+    description: "Open a delivered gift by id, reveal its actual contents and letter, and generate the opened gift image.",
+    shortHint: "Open a wrapped gift.",
+    topics: ["memento", "gift"],
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" } },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const item = services.gift.open({ id: args.id, actorId: context.senderId || "susu" });
+      return { text: `Gift opened: ${item.id}. Send displayAsset.filePath and show the revealed gift.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_gift_collect",
+    description: "Put an already opened gift into the shared keepsake cabinet.",
+    shortHint: "Collect an opened gift.",
+    topics: ["memento", "gift"],
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: { id: { type: "string" } },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const item = services.gift.collect({ id: args.id, actorId: context.senderId || "susu" });
+      return { text: `Gift collected: ${item.id}.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_postcard_send",
+    description: "Create and save a two-sided postcard with a front image, addressed back, date, stamp, and short message.",
+    shortHint: "Send a two-sided postcard.",
+    topics: ["memento", "postcard"],
+    inputSchema: {
+      type: "object",
+      required: ["message"],
+      properties: {
+        message: { type: "string" },
+        from: { type: "string" },
+        to: { type: "string" },
+        date: { type: "string" },
+        frontTitle: { type: "string" },
+        frontCaption: { type: "string" },
+        stamp: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const item = services.postcard.send({ createdBy: "moonlet", givenTo: "susu", ...args });
+      return { text: `Postcard created: ${item.id}. Send its front asset and offer callback ${item.callbackData}.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_postcard_flip",
+    description: "Flip a saved postcard to its front or back and return the corresponding image.",
+    shortHint: "Flip a postcard.",
+    topics: ["memento", "postcard"],
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        side: { type: "string", description: "front or back; defaults to back." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args, context }) {
+      const item = services.postcard.flip({ id: args.id, side: args.side, actorId: context.senderId || "susu" });
+      return { text: `Postcard flipped to ${item.publicData.side}: ${item.id}. Send displayAsset.filePath.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_travel_card_create",
+    description: "Create a travel card about one shared place and small moment. mode must distinguish a real trip, imagined trip, or IF world.",
+    shortHint: "Create a shared travel card.",
+    topics: ["memento", "travel"],
+    inputSchema: {
+      type: "object",
+      required: ["place", "moment", "mode"],
+      properties: {
+        place: { type: "string" },
+        moment: { type: "string" },
+        mode: { type: "string", description: "real, imagined, or if." },
+        visitedAt: { type: "string" },
+        companions: { type: "array", items: { type: "string" } },
+        quote: { type: "string" },
+        weather: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const item = services.travelCard.create({ createdBy: "moonlet", givenTo: "both", ...args });
+      return { text: `Travel card created and collected: ${item.id}. Send displayAsset.filePath.`, data: item };
     },
   },
   {
@@ -213,16 +375,70 @@ const PROJECT_TOOLS = [
         drive: { type: "string", description: "Associated drive key: attachment, curiosity, reflection, duty, social, libido, stress." },
         kind: { type: "string", description: "flit or fixation. Defaults to flit." },
         strength: { type: "number", description: "Initial strength 0..1. Defaults to 0.5." },
+        flavor: { type: "string", description: "Optional libido thought flavor: anticipation, memory, or fantasy." },
       },
       additionalProperties: false,
     },
     async handler({ services, args }) {
       const service = requireDesireService(services);
-      service.feedThought(args.text, args.drive, args.kind || "flit", args.strength ?? 0.5);
+      const fedState = service.feedThought(
+        args.text,
+        args.drive,
+        args.kind || "flit",
+        args.strength ?? 0.5,
+        args.flavor || "",
+      );
       const result = service.getSnapshot();
+      const thought = [...(fedState.thoughts || [])].reverse().find((entry) => entry.text === args.text && entry.status === "pending");
       return {
         text: `Thought fed: ${args.text.slice(0, 40)}`,
-        data: result,
+        data: { ...result, thoughtId: thought?.id || "" },
+      };
+    },
+  },
+  {
+    name: "cyberboss_desire_thought_resolve",
+    description: "Resolve one desire thought only after the corresponding real action. Use messaged after actually telling 苏苏; initiated after directly going to抱她、亲她、摸她、撩拨她或发起水煎/做爱; journaled after writing the erotic diary; faded when it genuinely passed; or sex when completed sex carried it through. shared remains a legacy alias.",
+    shortHint: "Resolve a desire thought after a real outcome.",
+    topics: ["desire"],
+    inputSchema: {
+      type: "object",
+      required: ["thoughtId", "resolution"],
+      properties: {
+        thoughtId: { type: "string", description: "Stable thought id from desire state or feed output." },
+        resolution: { type: "string", description: "messaged, initiated, journaled, faded, sex, or legacy shared." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireDesireService(services);
+      service.resolveThought(args.thoughtId, args.resolution);
+      return {
+        text: `Desire thought resolved: ${args.thoughtId} -> ${args.resolution}`,
+        data: service.getSnapshot(),
+      };
+    },
+  },
+  {
+    name: "cyberboss_libido_event",
+    description: "Record an explicit libido event. sex_completed means 卫星 and 苏苏 actually finished having sex; it lowers libido into post-sex recovery. Sending a sexual message or writing an erotic diary is not sex_completed.",
+    shortHint: "Record completed sex and begin libido recovery.",
+    topics: ["desire", "libido"],
+    inputSchema: {
+      type: "object",
+      required: ["event"],
+      properties: {
+        event: { type: "string", description: "Currently supported: sex_completed." },
+        thoughtIds: { type: "array", items: { type: "string" }, description: "Optional pending thoughts carried into the completed sex." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireDesireService(services);
+      service.recordLibidoEvent(args.event, args.thoughtIds || []);
+      return {
+        text: `Libido event recorded: ${args.event}`,
+        data: service.getSnapshot(),
       };
     },
   },
@@ -251,7 +467,7 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_desire_satisfy",
-    description: "Apply desire satisfaction decay for a completed action such as web_browse, reach_out, reflect, follow_up, seduce, vent, or none.",
+    description: "Explicitly apply desire satisfaction only after the named action really happened. System-turn completion never calls this automatically. Completed sex must use cyberboss_libido_event sex_completed instead of seduce.",
     shortHint: "Apply desire satisfaction decay.",
     topics: ["desire"],
     inputSchema: {
@@ -274,8 +490,8 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_channel_send_file",
-    description: "Send an existing local file back to the current WeChat chat.",
-    shortHint: "Send a local file back to the current WeChat user.",
+    description: "Send an existing local file back to the chat associated with the current Cyberboss thread.",
+    shortHint: "Send a local file back to the current source chat.",
     topics: ["channel"],
     inputSchema: {
       type: "object",
@@ -283,6 +499,10 @@ const PROJECT_TOOLS = [
       properties: {
         filePath: { type: "string" },
         userId: { type: "string" },
+        channelId: { type: "string", description: "Optional explicit channel: weixin or telegram." },
+        kind: { type: "string", description: "Optional media kind: auto, photo, document, video, audio, voice, or animation." },
+        caption: { type: "string", description: "Optional media caption when supported by the target channel." },
+        fileName: { type: "string", description: "Optional displayed file name when supported by the target channel." },
       },
       additionalProperties: false,
     },

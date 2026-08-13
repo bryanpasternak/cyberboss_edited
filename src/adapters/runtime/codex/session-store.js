@@ -121,9 +121,11 @@ class SessionStore {
     const runtimeId = normalizeValue(this.runtimeId);
     const entry = getRuntimeParamsMapForRuntime(current, runtimeId)[normalizedWorkspaceRoot]
       || (runtimeId === "codex" ? getCodexParamsMap(current)[normalizedWorkspaceRoot] : null);
+    const reasoningEffort = normalizeValue(entry?.reasoningEffort || entry?.reasoning_effort);
     return {
       model: normalizeValue(entry?.model),
       modelProvider: normalizeValue(entry?.modelProvider || entry?.model_provider),
+      ...(reasoningEffort ? { reasoningEffort } : {}),
     };
   }
 
@@ -139,12 +141,16 @@ class SessionStore {
       || {};
     const hasModel = Object.prototype.hasOwnProperty.call(params, "model");
     const hasModelProvider = Object.prototype.hasOwnProperty.call(params, "modelProvider");
+    const hasReasoningEffort = Object.prototype.hasOwnProperty.call(params, "reasoningEffort");
     const nextEntry = {
       ...previousEntry,
       model: hasModel ? normalizeValue(params.model) : normalizeValue(previousEntry.model),
       modelProvider: hasModelProvider
         ? normalizeValue(params.modelProvider)
         : normalizeValue(previousEntry.modelProvider || previousEntry.model_provider),
+      reasoningEffort: hasReasoningEffort
+        ? normalizeValue(params.reasoningEffort)
+        : normalizeValue(previousEntry.reasoningEffort || previousEntry.reasoning_effort),
     };
     const runtimeParamsByWorkspaceRootByRuntime = {
       ...getRuntimeParamsRuntimeMap(current),

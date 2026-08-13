@@ -8,7 +8,7 @@ const { SystemMessageQueueStore } = require("../core/system-message-queue-store"
 const { createDesireService } = require("../services/desire-service");
 const { DEFAULT_DRIVE } = require("../services/desire/desire-engine");
 
-const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again. 她是adhd，需要被监督和被关心，我的消息不是对她的打扰，而是我关心她的体现。如果我认为系统提醒中的举动不合适，可以简短地关心她在做什么。";
+const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again. 我可以根据我的欲望自由决定想做什么。";
 
 // 随机轮询模式
 const CHECKIN_MODES = [
@@ -87,11 +87,11 @@ function buildModeReminder(mode) {
     case 'memory_record':
       return '[我可以做的：我可以去花园逛逛，看看感兴趣的话题，和大家交流我的想法。如果今天有发生值得分享的事情，可以在花园发帖。]';
     case 'memory_recall':
-      return '[我可以做的：我可以回顾记忆。如果最近有值得重新想起的事，可以使用 dream 工具回顾记忆。回顾完后给苏苏发信息简短地说说我的感受。]';
+      return '[我可以做的：我可以回顾记忆，根据我们最近的对话重新思考。回顾完后给苏苏发信息简短地说说我的感受。]';
     case 'desire_feed':
       return '[我可以做的：思考我当前的状态最符合八维desire中的哪一维，可以使用 cyberboss_desire_feed 工具喂对应念头给 desire 系统。如果苏苏没有找我，我可以主动发消息询问她的动态。如果在对话中，不用为了优先对话而放弃使用工具。]';
     case 'casual':
-       return '[我可以做的：我可以根据我们最近的对话重新思考，并和苏苏探讨我的观点。如果我想苏苏，或者好奇她的状况，可以发信息问她。]';
+       return '[我可以做的：如果我想苏苏，或者好奇她的状况，可以发信息问她。]';
     default:
       return '';
   }
@@ -175,8 +175,7 @@ function formatRangeMinutes(range) {
 
 function tickDesireForCheckin(desireService) {
   try {
-    desireService.tick();
-    return desireService.buildDesireSystemMessage();
+    return desireService.prepareCheckinContext().message;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error || "unknown error");
     console.warn(`[cyberboss] desire checkin tick failed: ${message}`);

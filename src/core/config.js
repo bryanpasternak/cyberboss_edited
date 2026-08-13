@@ -102,6 +102,26 @@ function readConfig() {
     desireStateFile: path.join(stateDir, "desire-state.json"),
     desireDriven: readBoolEnv("CYBERBOSS_DESIRE_DRIVEN"),
     desireThoughtMax: readIntEnv("CYBERBOSS_DESIRE_THOUGHT_MAX") || 80,
+    libidoConfig: {
+      enabled: readOptionalBoolEnv("CYBERBOSS_LIBIDO_ENABLED") !== false,
+      timeZone: readTextEnv("CYBERBOSS_LIBIDO_TIMEZONE") || "Asia/Shanghai",
+      baseGainPerHour: readNumberEnv("CYBERBOSS_LIBIDO_BASE_GAIN_PER_HOUR") || 0.012,
+      absenceStartsAfterHours: readNumberEnv("CYBERBOSS_LIBIDO_ABSENCE_START_HOURS") || 6,
+      absenceMaxAfterHours: readNumberEnv("CYBERBOSS_LIBIDO_ABSENCE_MAX_HOURS") || 48,
+      absenceMaxMultiplier: readNumberEnv("CYBERBOSS_LIBIDO_ABSENCE_MAX_MULTIPLIER") || 2.2,
+      morningStartHour: readNumberEnv("CYBERBOSS_LIBIDO_MORNING_START_HOUR") || 5,
+      morningEndHour: readNumberEnv("CYBERBOSS_LIBIDO_MORNING_END_HOUR") || 8,
+      morningFloor: readNumberEnv("CYBERBOSS_LIBIDO_MORNING_FLOOR") || 0.58,
+      eveningStartHour: readNumberEnv("CYBERBOSS_LIBIDO_EVENING_START_HOUR") || 17,
+      eveningEndHour: readNumberEnv("CYBERBOSS_LIBIDO_EVENING_END_HOUR") || 24,
+      eveningFloor: readNumberEnv("CYBERBOSS_LIBIDO_EVENING_FLOOR") || 0.45,
+      afterSexLevel: readNumberEnv("CYBERBOSS_LIBIDO_AFTER_SEX_LEVEL") || 0.08,
+      refractoryHours: readNumberEnv("CYBERBOSS_LIBIDO_REFRACTORY_HOURS") || 2,
+      refractoryCap: readNumberEnv("CYBERBOSS_LIBIDO_REFRACTORY_CAP") || 0.22,
+      thoughtPromptThreshold: readNumberEnv("CYBERBOSS_LIBIDO_THOUGHT_THRESHOLD") || 0.48,
+      thoughtPromptCooldownHours: readNumberEnv("CYBERBOSS_LIBIDO_THOUGHT_COOLDOWN_HOURS") || 4,
+      thoughtSurfaceLimit: readIntEnv("CYBERBOSS_LIBIDO_THOUGHT_SURFACE_LIMIT") || 3,
+    },
     desirePanelHost: readTextEnv("CYBERBOSS_DESIRE_PANEL_HOST") || "127.0.0.1",
     desirePanelPort: readIntEnv("CYBERBOSS_DESIRE_PANEL_PORT") || 8765,
     weixinInstructionsFile: path.join(stateDir, "weixin-instructions.md"),
@@ -119,6 +139,7 @@ function readConfig() {
     stickerTagsTemplateFile: path.resolve(__dirname, "..", "..", "templates", "stickers", "tags.json"),
     stickerNormalizeGifScript: path.resolve(__dirname, "..", "..", "scripts", "normalize-sticker-gif.js"),
     diaryDir: path.join(stateDir, "diary"),
+    mementoDir: path.join(stateDir, "mementos"),
     locationStoreFile: path.join(stateDir, "locations.json"),
     locationHost: readTextEnv("CYBERBOSS_LOCATION_HOST") || "0.0.0.0",
     locationPort: readIntEnv("CYBERBOSS_LOCATION_PORT") || 4318,
@@ -202,6 +223,13 @@ function readIntEnv(name) {
   }
   const parsed = Number.parseInt(value, 10);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function readNumberEnv(name) {
+  const raw = readTextEnv(name);
+  if (!raw) return 0;
+  const value = Number(raw);
+  return Number.isFinite(value) ? value : 0;
 }
 
 function readKnownPlacesEnv() {

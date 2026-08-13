@@ -34,6 +34,10 @@ class RuntimeContextStore {
     bindingKey = "",
     accountId = "",
     senderId = "",
+    provider = "",
+    channelId = "",
+    externalUserId = "",
+    contextToken = "",
   } = {}) {
     const normalizedWorkspaceRoot = normalizeWorkspaceRoot(workspaceRoot);
     if (!normalizedWorkspaceRoot) {
@@ -46,6 +50,10 @@ class RuntimeContextStore {
       bindingKey: normalizeText(bindingKey),
       accountId: normalizeText(accountId),
       senderId: normalizeText(senderId),
+      provider: normalizeText(provider),
+      channelId: normalizeText(channelId),
+      externalUserId: normalizeText(externalUserId),
+      contextToken: normalizeText(contextToken),
       updatedAt: new Date().toISOString(),
     };
     this.state.contextsByWorkspaceRoot = {

@@ -12,9 +12,12 @@ const {
   extractTelegramInlineKeyboard,
   findCallbackButton,
   findCallbackButtonText,
+  resolveCallbackInboundText,
   mergeTelegramShortChunks,
+  resolveTelegramMediaKind,
   splitForTelegram,
 } = require("../src/adapters/channel/telegram");
+const { extractAttachmentItems } = require("../src/adapters/channel/telegram/message-utils");
 
 test("extractTelegramInlineKeyboard removes a valid trailing directive", () => {
   const result = extractTelegramInlineKeyboard([
@@ -78,6 +81,31 @@ test("callback query resolves button text and becomes a synthetic inbound messag
   assert.equal(inbound.message.chat.id, 123);
   assert.equal(inbound.message.from.id, 7);
   assert.equal(inbound.message.text, "直接亲我");
+});
+
+test("erotic refresh callback becomes a continuity-preserving regeneration request", () => {
+  const text = resolveCallbackInboundText({
+    text: "换一批更涩的",
+    callback_data: "refresh:erotic",
+  });
+  assert.match(text, /不要推进、回退或重置做爱场景/);
+  assert.match(text, /承接上一刻的姿势、插入状态、湿润、精液/);
+  assert.match(text, /比上一批更色情更具体/);
+  assert.match(text, /refresh:erotic/);
+  assert.doesNotMatch(text, /自己告诉哥哥/);
+});
+
+test("memento callbacks become explicit MCP action requests", () => {
+  const giftId = "gift_11111111-1111-4111-8111-111111111111";
+  const postcardId = "postcard_22222222-2222-4222-8222-222222222222";
+  const open = resolveCallbackInboundText({ text: "拆开礼物", callback_data: `gift:open:${giftId}` });
+  const collect = resolveCallbackInboundText({ text: "收进小柜子", callback_data: `gift:collect:${giftId}` });
+  const flip = resolveCallbackInboundText({ text: "翻到背面", callback_data: `postcard:flip:${postcardId}:back` });
+  assert.match(open, /cyberboss_gift_open/);
+  assert.match(open, new RegExp(giftId));
+  assert.match(collect, /cyberboss_gift_collect/);
+  assert.match(flip, /cyberboss_postcard_flip/);
+  assert.match(flip, /side=back/);
 });
 
 test("telegram adapter sends buttons on the final chunk", async (t) => {
@@ -230,6 +258,63 @@ test("telegram adapter opens a ForceReply prompt for an input callback", async (
   });
 });
 
+test("telegram adapter injects an erotic refresh request without opening ForceReply", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-tg-refresh-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  disableTelegramProxyForTest(t);
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    const method = String(url).split("/").pop();
+    const body = JSON.parse(init.body);
+    requests.push({ method, body });
+    const result = method === "getUpdates"
+      ? [{
+          update_id: 12,
+          callback_query: {
+            id: "callback-12",
+            data: "refresh:erotic",
+            from: { id: 7, first_name: "苏苏" },
+            message: {
+              message_id: 13,
+              chat: { id: 123, type: "private" },
+              reply_markup: {
+                inline_keyboard: [[{
+                  text: "换一批更涩的",
+                  callback_data: "refresh:erotic",
+                }]],
+              },
+            },
+          },
+        }]
+      : true;
+    return new Response(JSON.stringify({ ok: true, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const identityMapStore = {
+    resolveCanonical() { return { senderId: "susu", accountId: "wechat-account" }; },
+  };
+  const config = buildTelegramTestConfig(tempDir);
+  config.telegramAllowedChatIds = ["susu"];
+  const adapter = createTelegramChannelAdapter(config, { identityMapStore });
+  const response = await adapter.getUpdates({ timeoutMs: 1_000 });
+
+  assert.deepEqual(requests.map((item) => item.method), [
+    "getUpdates",
+    "answerCallbackQuery",
+    "editMessageReplyMarkup",
+  ]);
+  assert.equal(response.msgs.length, 1);
+  const normalized = adapter.normalizeIncomingMessage(response.msgs[0]);
+  assert.match(normalized.text, /Telegram 情色选项刷新/);
+  assert.match(normalized.text, /只重新生成三个/);
+  assert.match(normalized.text, /换一批更涩的/);
+});
+
 test("chunkReplyTextForTelegram merges short natural boundaries", () => {
   const chunks = chunkReplyTextForTelegram("A。\n\nB。\n\nC。");
   assert.deepEqual(chunks, ["A。\n\nB。\n\nC。"]);
@@ -263,6 +348,63 @@ test("splitForTelegram preserves text while splitting by utf8 bytes", () => {
   const chunks = splitForTelegram(text, 4096);
   assert.equal(chunks.length, 2);
   assert.equal(chunks.join(""), text);
+});
+
+test("telegram media kind inference preserves native media semantics", () => {
+  assert.equal(resolveTelegramMediaKind("auto", "photo.jpg"), "photo");
+  assert.equal(resolveTelegramMediaKind("auto", "clip.mp4"), "video");
+  assert.equal(resolveTelegramMediaKind("auto", "song.mp3"), "audio");
+  assert.equal(resolveTelegramMediaKind("auto", "note.ogg"), "voice");
+  assert.equal(resolveTelegramMediaKind("auto", "loop.gif"), "animation");
+  assert.equal(resolveTelegramMediaKind("document", "photo.jpg"), "document");
+  assert.equal(resolveTelegramMediaKind("auto", "archive.zip"), "document");
+});
+
+test("telegram adapter uploads native media with caption and returns its delivery kind", async (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-tg-media-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  disableTelegramProxyForTest(t);
+  const filePath = path.join(tempDir, "clip.mp4");
+  fs.writeFileSync(filePath, "video-bytes");
+  const requests = [];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    requests.push({ url: String(url), form: init.body });
+    return new Response(JSON.stringify({ ok: true, result: { message_id: 7 } }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+  t.after(() => { globalThis.fetch = originalFetch; });
+
+  const adapter = createTelegramChannelAdapter(buildTelegramTestConfig(tempDir));
+  const delivery = await adapter.sendMedia({
+    userId: "123",
+    contextToken: "tg:123",
+    source: { type: "local_file", path: filePath },
+    kind: "video",
+    caption: "片段",
+  });
+
+  assert.equal(delivery.deliveryKind, "video");
+  assert.match(requests[0].url, /\/sendVideo$/);
+  assert.equal(requests[0].form.get("chat_id"), "123");
+  assert.equal(requests[0].form.get("caption"), "片段");
+  assert.ok(requests[0].form.get("video") instanceof Blob);
+});
+
+test("telegram inbound extracts audio animation and video notes", () => {
+  const items = extractAttachmentItems({
+    message_id: 12,
+    audio: { file_id: "audio-1", file_name: "song.mp3", mime_type: "audio/mpeg" },
+    animation: { file_id: "animation-1", file_name: "loop.gif", mime_type: "image/gif" },
+    video_note: { file_id: "note-1", duration: 4 },
+  });
+  assert.deepEqual(items.map((item) => [item.kind, item.itemType]), [
+    ["audio", "audio"],
+    ["animation", "animation"],
+    ["video", "video_note"],
+  ]);
 });
 
 function buildTelegramTestConfig(tempDir) {

@@ -261,6 +261,30 @@ async function sendPhoto({ baseUrl, botToken, chatId, fileBuffer, fileName, capt
   });
 }
 
+async function sendVideo({ baseUrl, botToken, chatId, fileBuffer, fileName, caption = "" }) {
+  return uploadFile({
+    baseUrl, botToken, method: "sendVideo", chatId, fileBuffer, fileName, caption, fileField: "video",
+  });
+}
+
+async function sendAudio({ baseUrl, botToken, chatId, fileBuffer, fileName, caption = "" }) {
+  return uploadFile({
+    baseUrl, botToken, method: "sendAudio", chatId, fileBuffer, fileName, caption, fileField: "audio",
+  });
+}
+
+async function sendVoice({ baseUrl, botToken, chatId, fileBuffer, fileName, caption = "" }) {
+  return uploadFile({
+    baseUrl, botToken, method: "sendVoice", chatId, fileBuffer, fileName, caption, fileField: "voice",
+  });
+}
+
+async function sendAnimation({ baseUrl, botToken, chatId, fileBuffer, fileName, caption = "" }) {
+  return uploadFile({
+    baseUrl, botToken, method: "sendAnimation", chatId, fileBuffer, fileName, caption, fileField: "animation",
+  });
+}
+
 async function uploadFile({ baseUrl, botToken, method, chatId, fileBuffer, fileName, caption, fileField }) {
   const url = buildEndpoint(baseUrl, botToken, method);
   const form = new FormData();
@@ -296,7 +320,11 @@ module.exports = {
   getMe,
   getUpdates,
   sendChatAction,
+  sendAnimation,
+  sendAudio,
   sendDocument,
   sendMessage,
   sendPhoto,
+  sendVideo,
+  sendVoice,
 };

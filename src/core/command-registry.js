@@ -268,6 +268,14 @@ const COMMAND_GROUPS = [
         status: "active",
       },
       {
+        action: "model.effort",
+        summary: "Inspect or change the reasoning effort for the current workspace",
+        terminal: [],
+        weixin: ["/effort [level]"],
+        telegram: ["/effort [level]"],
+        status: "active",
+      },
+      {
         action: "channel.send_file",
         summary: "Send a local file back to the current chat as an attachment",
         terminal: [],
@@ -475,6 +483,7 @@ function actionEmoji(action) {
     case "identity.unlink": return "✂️";
     case "model.inspect":
     case "model.select": return "🤖";
+    case "model.effort": return "🧠";
     case "app.help": return "❓";
     case "app.star": return "⭐️";
     default: return "•";

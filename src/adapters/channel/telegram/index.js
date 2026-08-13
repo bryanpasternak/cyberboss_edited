@@ -10,6 +10,7 @@ const {
   extractTelegramInlineKeyboard,
   findCallbackButton,
   findCallbackButtonText,
+  resolveCallbackInboundText,
 } = require("./inline-keyboard");
 const {
   collectStreamingBoundaries,
@@ -27,9 +28,13 @@ const {
   editMessageReplyMarkup,
   getUpdates,
   sendChatAction,
+  sendAnimation,
+  sendAudio,
   sendDocument,
   sendMessage,
   sendPhoto,
+  sendVideo,
+  sendVoice,
 } = require("./api");
 
 const DEFAULT_LONG_POLL_TIMEOUT_S = 30;
@@ -111,6 +116,12 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
           supportsAttachments: true,
           supportsChunkConfig: true,
           supportsHtml: true,
+          media: {
+            send: ["photo", "document", "video", "audio", "voice", "animation"],
+            caption: true,
+            mediaGroup: false,
+            linkPreviewOptions: false,
+          },
         },
       };
     },
@@ -178,7 +189,10 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
           const msg = update.message || update.edited_message || {};
           const fromId = msg?.from?.id ?? "";
           const chatId = msg?.chat?.id ?? "";
-          const preview = String(msg.text || msg.caption || "[media]").slice(0, 60);
+          const rawPreview = String(msg.text || msg.caption || "[media]");
+          const preview = rawPreview.startsWith("[Telegram 情色选项刷新]")
+            ? "[erotic option refresh]"
+            : rawPreview.slice(0, 60);
           console.log(`[telegram] update_id=${update.update_id} chat=${chatId} from=${fromId} text=${JSON.stringify(preview)}`);
         }
       }
@@ -206,31 +220,32 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
         action: "typing",
       }).catch(() => {});
     },
-    async sendFile({ userId, filePath, contextToken = "" }) {
+    async sendMedia({ userId, filePath = "", source = null, kind = "auto", caption = "", fileName = "", contextToken = "" }) {
       const account = ensureAccount();
       const chatId = resolveChatId(userId, contextToken);
       if (!chatId) {
         throw new Error("telegram sendFile requires a chatId");
       }
-      const buffer = await fs.readFile(filePath);
-      const fileName = path.basename(filePath);
-      const lower = fileName.toLowerCase();
-      if (lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".jpeg") || lower.endsWith(".webp")) {
-        return sendPhoto({
-          baseUrl: account.apiBaseUrl,
-          botToken: account.botToken,
-          chatId,
-          fileBuffer: buffer,
-          fileName,
-        });
+      const resolvedPath = String(source?.path || filePath || "").trim();
+      if (!resolvedPath) {
+        throw new Error("telegram sendMedia requires a local file path");
       }
-      return sendDocument({
+      const buffer = await fs.readFile(resolvedPath);
+      const resolvedFileName = String(fileName || path.basename(resolvedPath));
+      const resolvedKind = resolveTelegramMediaKind(kind, resolvedFileName);
+      const send = resolveTelegramMediaSender(resolvedKind);
+      const result = await send({
         baseUrl: account.apiBaseUrl,
         botToken: account.botToken,
         chatId,
         fileBuffer: buffer,
-        fileName,
+        fileName: resolvedFileName,
+        caption,
       });
+      return { result, deliveryKind: resolvedKind };
+    },
+    async sendFile(payload) {
+      return this.sendMedia({ ...payload, kind: "auto" });
     },
     setMinChunkChars(value) {
       const parsed = Number.parseInt(String(value), 10);
@@ -319,8 +334,36 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
       return null;
     }
 
-    return buildCallbackInboundUpdate(update, buttonText);
+    return buildCallbackInboundUpdate(update, resolveCallbackInboundText(selectedButton));
   }
+}
+
+function resolveTelegramMediaKind(kind, fileName) {
+  const explicit = String(kind || "").trim().toLowerCase();
+  if (explicit && explicit !== "auto") {
+    if (["photo", "document", "video", "audio", "voice", "animation"].includes(explicit)) {
+      return explicit;
+    }
+    throw new Error(`unsupported telegram media kind: ${explicit}`);
+  }
+  const extension = path.extname(String(fileName || "")).toLowerCase();
+  if ([".png", ".jpg", ".jpeg", ".webp"].includes(extension)) return "photo";
+  if ([".mp4", ".mov", ".m4v", ".webm"].includes(extension)) return "video";
+  if ([".mp3", ".m4a", ".aac", ".flac", ".wav"].includes(extension)) return "audio";
+  if ([".ogg", ".oga", ".opus"].includes(extension)) return "voice";
+  if ([".gif"].includes(extension)) return "animation";
+  return "document";
+}
+
+function resolveTelegramMediaSender(kind) {
+  return {
+    photo: sendPhoto,
+    document: sendDocument,
+    video: sendVideo,
+    audio: sendAudio,
+    voice: sendVoice,
+    animation: sendAnimation,
+  }[kind] || sendDocument;
 }
 
 function normalizeTelegramReplyText(text) {
@@ -449,9 +492,11 @@ module.exports = {
   extractTelegramInlineKeyboard,
   findCallbackButton,
   findCallbackButtonText,
+  resolveCallbackInboundText,
   normalizeTelegramReplyText,
   chunkReplyTextForTelegram,
   mergeTelegramShortChunks,
   splitForTelegram,
   sliceUtf8,
+  resolveTelegramMediaKind,
 };

@@ -1,7 +1,11 @@
 const { createWeixinChannelAdapter } = require("../adapters/channel/weixin");
+const { createTelegramChannelAdapter } = require("../adapters/channel/telegram");
 const { SessionStore } = require("../adapters/runtime/codex/session-store");
+const { IdentityMapStore } = require("../core/identity-map-store");
+const { LastActiveChannelStore } = require("../core/last-active-channel-store");
 const { createTimelineIntegration } = require("../integrations/timeline");
 const { ChannelFileService } = require("../services/channel-file-service");
+const { ChannelDeliveryTargetResolver } = require("../services/channel-delivery-target-resolver");
 const { DiaryService } = require("../services/diary-service");
 const { ReminderService } = require("../services/reminder-service");
 const { StickerService } = require("../services/sticker-service");
@@ -9,6 +13,7 @@ const { SystemMessageService } = require("../services/system-message-service");
 const { TimelineService } = require("../services/timeline-service");
 const { createDesireService } = require("../services/desire-service");
 const { createChatMemoryRuntime } = require("../services/chat-memory");
+const { createMementoServices } = require("../services/mementos");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
 const { WhereaboutsService } = require("whereabouts-mcp");
@@ -18,13 +23,37 @@ function createProjectTooling(config, options = {}) {
     filePath: config.sessionsFile,
     runtimeId: config.runtime || "codex",
   });
-  const channelAdapter = options.channelAdapter || createWeixinChannelAdapter(config);
+  const identityMapStore = options.identityMapStore || new IdentityMapStore({ filePath: config.identityMapFile });
+  const channels = options.channels instanceof Map
+    ? options.channels
+    : createToolChannels(config, { identityMapStore, fallbackAdapter: options.channelAdapter });
+  const channelAdapter = options.channelAdapter
+    || channels.get("weixin")
+    || channels.values().next().value
+    || createWeixinChannelAdapter(config);
+  if (!channels.size) {
+    channels.set(channelAdapter.describe?.().id || "weixin", channelAdapter);
+  }
+  const lastActiveStore = options.lastActiveStore || new LastActiveChannelStore({
+    filePath: config.lastActiveChannelFile,
+  });
   const timelineIntegration = options.timelineIntegration || createTimelineIntegration(config);
   const runtimeContextStore = options.runtimeContextStore || new RuntimeContextStore({
     filePath: config.projectToolContextFile,
   });
-  const channelFile = new ChannelFileService({ config, channelAdapter, sessionStore });
+  const deliveryTargetResolver = options.deliveryTargetResolver || new ChannelDeliveryTargetResolver({
+    config,
+    sessionStore,
+    channels,
+    lastActiveStore,
+    defaultChannelId: config.defaultOutboundChannel,
+  });
+  const channelFile = new ChannelFileService({
+    resolveTarget: (payload) => deliveryTargetResolver.resolve(payload),
+    resolveChannel: (channelId) => channels.get(String(channelId || "").trim().toLowerCase()) || null,
+  });
   const chatMemoryRuntime = createChatMemoryRuntime({ config });
+  const mementos = createMementoServices(config);
   const services = {
     diary: new DiaryService({ config }),
     reminder: new ReminderService({ config, sessionStore }),
@@ -34,6 +63,10 @@ function createProjectTooling(config, options = {}) {
     promiseMemory: chatMemoryRuntime.promises,
     chatMemoryRuntime,
     desire: createDesireService(config),
+    memento: mementos.memento,
+    gift: mementos.gift,
+    postcard: mementos.postcard,
+    travelCard: mementos.travelCard,
     sticker: new StickerService({ config, channelAdapter, sessionStore, channelFileService: channelFile }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),
     whereabouts: new WhereaboutsService({
@@ -65,4 +98,28 @@ function createProjectTooling(config, options = {}) {
   };
 }
 
-module.exports = { createProjectTooling };
+function createToolChannels(config, { identityMapStore, fallbackAdapter = null } = {}) {
+  const channels = new Map();
+  const requested = Array.isArray(config.channels) && config.channels.length
+    ? config.channels
+    : [config.channel || "weixin"];
+  for (const rawId of requested) {
+    const channelId = String(rawId || "").trim().toLowerCase();
+    if (!channelId || channels.has(channelId)) continue;
+    if (channelId === "weixin") {
+      channels.set(channelId, fallbackAdapter?.describe?.().id === "weixin"
+        ? fallbackAdapter
+        : createWeixinChannelAdapter(config));
+    } else if (channelId === "telegram") {
+      channels.set(channelId, fallbackAdapter?.describe?.().id === "telegram"
+        ? fallbackAdapter
+        : createTelegramChannelAdapter(config, { identityMapStore }));
+    }
+  }
+  if (!channels.size && fallbackAdapter) {
+    channels.set(fallbackAdapter.describe?.().id || "weixin", fallbackAdapter);
+  }
+  return channels;
+}
+
+module.exports = { createProjectTooling, createToolChannels };
