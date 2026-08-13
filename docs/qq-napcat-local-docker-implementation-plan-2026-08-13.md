@@ -223,6 +223,6 @@ feat: support QQ media through local Docker
 
 ## 9. 当前实施状态
 
-- 已完成：方案记录、基线确认、阶段 A（精确回复目标与 Telegram 白名单）。
-- 实施中：阶段 B。
-- 未完成：OneBot 客户端、QQ adapter、身份绑定、媒体收发和真实 NapCat 联调。
+- 已完成：方案记录、基线确认、阶段 A（精确回复目标与 Telegram 白名单）、阶段 B（OneBot 文字通道）、阶段 C（身份绑定与同线程）。
+- 实施中：阶段 D（本地 Docker 媒体收发）。
+- 未完成：媒体收发和真实 NapCat 联调。

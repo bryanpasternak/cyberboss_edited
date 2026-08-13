@@ -414,7 +414,7 @@ function buildChannelHelpText(channelId) {
   const lines = ["💡 Available commands:"];
   for (const group of COMMAND_GROUPS) {
     const activeActions = group.actions.filter((action) => {
-      const list = Array.isArray(action[channelKey]) ? action[channelKey] : [];
+      const list = commandExamplesForChannel(action, channelKey);
       return action.status === "active" && list.length;
     });
     if (!activeActions.length) {
@@ -423,7 +423,7 @@ function buildChannelHelpText(channelId) {
     lines.push("");
     lines.push(`${groupEmoji(group.id)} 【${group.label}】`);
     for (const action of activeActions) {
-      const examples = (Array.isArray(action[channelKey]) ? action[channelKey] : []).join(", ");
+      const examples = commandExamplesForChannel(action, channelKey).join(", ");
       lines.push(`  ${actionEmoji(action)} ${examples} — ${action.summary}`);
     }
   }
@@ -439,7 +439,7 @@ function isCommandSupportedOnChannel(commandName, channelId) {
   for (const group of COMMAND_GROUPS) {
     for (const action of group.actions) {
       if (action.status !== "active") continue;
-      const list = Array.isArray(action[channelKey]) ? action[channelKey] : [];
+      const list = commandExamplesForChannel(action, channelKey);
       for (const entry of list) {
         const head = String(entry || "").trim().split(/\s+/)[0];
         if (!head) continue;
@@ -450,6 +450,14 @@ function isCommandSupportedOnChannel(commandName, channelId) {
     }
   }
   return false;
+}
+
+function commandExamplesForChannel(action, channelKey) {
+  if (Array.isArray(action?.[channelKey])) return action[channelKey];
+  if (channelKey === "qq" && action?.action !== "channel.chunk_min" && Array.isArray(action?.telegram)) {
+    return action.telegram;
+  }
+  return [];
 }
 
 function groupEmoji(groupId) {

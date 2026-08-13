@@ -225,6 +225,9 @@ function formatInboundChannelLabel(channelId) {
   if (normalized === "telegram") {
     return "Telegram";
   }
+  if (normalized === "qq") {
+    return "QQ";
+  }
   if (normalized === "weixin" || normalized === "wechat") {
     return "微信";
   }

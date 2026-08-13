@@ -7,6 +7,7 @@ const { DEFAULT_MIN_WEIXIN_CHUNK, MAX_MIN_WEIXIN_CHUNK } = require("../adapters/
 const { persistIncomingWeixinAttachments } = require("../adapters/channel/weixin/media-receive");
 const { createTelegramChannelAdapter } = require("../adapters/channel/telegram");
 const { persistIncomingTelegramAttachments } = require("../adapters/channel/telegram/media-receive");
+const { createQqChannelAdapter } = require("../adapters/channel/qq");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { createClaudeCodeRuntimeAdapter } = require("../adapters/runtime/claudecode");
 const { findModelByQuery, resolveEffectiveModelForEffort } = require("../adapters/runtime/codex/model-catalog");
@@ -85,6 +86,8 @@ function buildEnabledChannels(config, { identityMapStore }) {
       channels.set("weixin", createWeixinChannelAdapter(config));
     } else if (id === "telegram") {
       channels.set("telegram", createTelegramChannelAdapter(config, { identityMapStore }));
+    } else if (id === "qq") {
+      channels.set("qq", createQqChannelAdapter(config, { identityMapStore }));
     } else {
       console.warn(`[cyberboss] unknown channel id=${id}, skipped`);
     }
@@ -188,6 +191,13 @@ class CyberbossApp {
     return this._activeReplyChannel || this.channelAdapter;
   }
 
+  async closeChannels() {
+    await Promise.allSettled([...this.channels.values()].map((channel) => {
+      if (typeof channel?.close !== "function") return Promise.resolve();
+      return Promise.resolve(channel.close());
+    }));
+  }
+
   printDoctor() {
     console.log(JSON.stringify({
       stateDir: this.config.stateDir,
@@ -268,6 +278,7 @@ class CyberbossApp {
       this.clearPendingImageInboundTimers();
       this.chatMemory.scheduler?.stop?.();
       await this.closeLocationServer();
+      await this.closeChannels();
       await this.runtimeAdapter.close();
     });
 
@@ -284,6 +295,7 @@ class CyberbossApp {
       this.clearPendingImageInboundTimers();
       this.chatMemory.scheduler?.stop?.();
       await this.closeLocationServer();
+      await this.closeChannels();
       await this.runtimeAdapter.close();
     }
   }
@@ -370,8 +382,10 @@ class CyberbossApp {
     if (!normalized) {
       return;
     }
-    if (channelId === "telegram" && normalized.canonicalSenderId === "" && normalized.externalSenderId) {
-      await this.handleUnlinkedTelegramInbound(channel, normalized);
+    if (isIdentityLinkedExternalChannel(channelId)
+        && normalized.canonicalSenderId === ""
+        && normalized.externalSenderId) {
+      await this.handleUnlinkedExternalChannelInbound(channelId, channel, normalized);
       return;
     }
     this.lastActiveChannelStore.mark(normalized.senderId, channelId);
@@ -379,7 +393,7 @@ class CyberbossApp {
     await this.handlePreparedMessage(normalized, { allowCommands: true, channelId, channel });
   }
 
-  async handleUnlinkedTelegramInbound(channel, normalized) {
+  async handleUnlinkedExternalChannelInbound(channelId, channel, normalized) {
     const text = String(normalized.text || "").trim();
     const argMatch = text.match(/^\/link\s+([A-Z0-9]{4,12})\s*$/i);
     if (argMatch) {
@@ -392,19 +406,21 @@ class CyberbossApp {
         return;
       }
       this.identityMapStore.link({
-        channel: "telegram",
+        channel: channelId,
         externalId: normalized.externalSenderId,
         canonicalSenderId: consumed.canonicalSenderId,
         canonicalAccountId: consumed.canonicalAccountId || "",
         metadata: {
           username: normalized.senderProfile?.username || "",
           firstName: normalized.senderProfile?.firstName || "",
+          nickname: normalized.senderProfile?.nickname || "",
         },
       });
-      this.lastActiveChannelStore.mark(consumed.canonicalSenderId, "telegram");
+      this.lastActiveChannelStore.mark(consumed.canonicalSenderId, channelId);
       await channel.sendText({
         userId: normalized.chatId,
-        text: `✅ 已绑定到身份 ${consumed.canonicalSenderId}。两端共享同一份对话上下文，最近活跃端会收到回复。`,
+        text: `✅ 已绑定到身份 ${consumed.canonicalSenderId}。各端共享同一份对话上下文，本轮回复会回到发起端。`,
+        contextToken: normalized.contextToken,
       }).catch(() => {});
       return;
     }
@@ -412,10 +428,11 @@ class CyberbossApp {
       userId: normalized.chatId,
       text: [
         "👋 你还没有绑定身份。",
-        "请先在微信端发送 /link 获取 6 位绑定码，",
+        "请先在微信或其他已绑定端发送 /link 获取 6 位绑定码，",
         "然后在这里发送：/link <code> 完成绑定。",
         "码 10 分钟内有效。",
       ].join("\n"),
+      contextToken: normalized.contextToken,
     }).catch(() => {});
   }
 
@@ -1471,17 +1488,13 @@ class CyberbossApp {
         });
         return;
       }
-      const externalId = channelId === "telegram"
-        ? normalized.externalSenderId || ""
-        : normalized.senderId;
+      const externalId = resolveIdentityExternalId(channelId, normalized);
       this.identityMapStore.link({
         channel: channelId,
         externalId,
         canonicalSenderId: consumed.canonicalSenderId,
         canonicalAccountId: consumed.canonicalAccountId || "",
-        metadata: channelId === "telegram"
-          ? { username: normalized.senderProfile?.username || "", firstName: normalized.senderProfile?.firstName || "" }
-          : {},
+        metadata: buildIdentityMetadata(normalized),
       });
       this.lastActiveChannelStore.mark(consumed.canonicalSenderId, channelId);
       await channel.sendText({
@@ -1517,9 +1530,7 @@ class CyberbossApp {
   }
 
   async handleUnlinkCommand(normalized, { channelId, channel }) {
-    const externalId = channelId === "telegram"
-      ? normalized.externalSenderId || ""
-      : normalized.senderId;
+    const externalId = resolveIdentityExternalId(channelId, normalized);
     const removed = this.identityMapStore.unlink({ channel: channelId, externalId });
     await channel.sendText({
       userId: normalized.senderId,
@@ -3236,6 +3247,27 @@ function normalizeThreadId(value) {
 
 function normalizeText(value) {
   return typeof value === "string" ? value.trim() : "";
+}
+
+function isIdentityLinkedExternalChannel(channelId) {
+  const normalized = normalizeText(channelId).toLowerCase();
+  return normalized === "telegram" || normalized === "qq";
+}
+
+function resolveIdentityExternalId(channelId, normalized) {
+  return isIdentityLinkedExternalChannel(channelId)
+    ? normalizeText(normalized?.externalSenderId)
+    : normalizeText(normalized?.senderId);
+}
+
+function buildIdentityMetadata(normalized) {
+  const profile = normalized?.senderProfile || {};
+  return {
+    username: normalizeText(profile.username),
+    firstName: normalizeText(profile.firstName),
+    nickname: normalizeText(profile.nickname),
+    card: normalizeText(profile.card),
+  };
 }
 
 function normalizeIsoTime(value) {

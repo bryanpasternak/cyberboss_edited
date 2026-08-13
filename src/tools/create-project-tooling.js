@@ -1,5 +1,6 @@
 const { createWeixinChannelAdapter } = require("../adapters/channel/weixin");
 const { createTelegramChannelAdapter } = require("../adapters/channel/telegram");
+const { createQqChannelAdapter } = require("../adapters/channel/qq");
 const { SessionStore } = require("../adapters/runtime/codex/session-store");
 const { IdentityMapStore } = require("../core/identity-map-store");
 const { LastActiveChannelStore } = require("../core/last-active-channel-store");
@@ -114,6 +115,10 @@ function createToolChannels(config, { identityMapStore, fallbackAdapter = null }
       channels.set(channelId, fallbackAdapter?.describe?.().id === "telegram"
         ? fallbackAdapter
         : createTelegramChannelAdapter(config, { identityMapStore }));
+    } else if (channelId === "qq") {
+      channels.set(channelId, fallbackAdapter?.describe?.().id === "qq"
+        ? fallbackAdapter
+        : createQqChannelAdapter(config, { identityMapStore }));
     }
   }
   if (!channels.size && fallbackAdapter) {
