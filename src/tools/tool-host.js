@@ -499,7 +499,7 @@ const PROJECT_TOOLS = [
       properties: {
         filePath: { type: "string" },
         userId: { type: "string" },
-        channelId: { type: "string", description: "Optional explicit channel: weixin or telegram." },
+        channelId: { type: "string", description: "Optional explicit channel: weixin, telegram, or qq." },
         kind: { type: "string", description: "Optional media kind: auto, photo, document, video, audio, voice, or animation." },
         caption: { type: "string", description: "Optional media caption when supported by the target channel." },
         fileName: { type: "string", description: "Optional displayed file name when supported by the target channel." },

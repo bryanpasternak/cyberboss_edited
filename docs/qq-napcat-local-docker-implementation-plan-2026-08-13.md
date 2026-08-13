@@ -12,7 +12,7 @@
 - `CyberbossApp` 支持同时启动多个 channel adapter，并通过统一的 `getUpdates()`、`normalizeIncomingMessage()`、`sendText()` 契约驱动渠道。
 - Telegram 已使用 `IdentityMapStore` 将外部身份映射为微信侧 canonical `accountId + senderId`。
 - `SessionStore` 根据 canonical 身份生成相同的 binding key，因此已绑定渠道可以复用同一 runtime thread。
-- `StreamDelivery` 已能按 `channelId` 选择回复 adapter，但 `dispatchPreparedTurn()` 的单轮 reply target 目前漏传 `channelId`。
+- `StreamDelivery` 已能按 `channelId` 选择回复 adapter；阶段 A 已让 `dispatchPreparedTurn()` 的单轮 reply target 同时保存精确 `channelId`。
 - 文件工具已经有通道无关的 `ChannelFileService` 和 `ChannelDeliveryTargetResolver`，可以继续扩展 QQ。
 - 项目已依赖 `ws`，无需新增 WebSocket 包。
 
@@ -219,10 +219,25 @@ feat: bind QQ identity into shared threads
 feat: support QQ media through local Docker
 ```
 
+已生成的阶段回滚点：
+
+```text
+881e66b fix: preserve exact channel for turn replies
+8db966b feat: add OneBot QQ text adapter and shared identity
+```
+
 发生问题时优先 `git revert` 对应阶段提交，不使用会抹掉未提交关系/anchor 文件的 destructive reset。
 
 ## 9. 当前实施状态
 
-- 已完成：方案记录、基线确认、阶段 A（精确回复目标与 Telegram 白名单）、阶段 B（OneBot 文字通道）、阶段 C（身份绑定与同线程）。
-- 实施中：阶段 D（本地 Docker 媒体收发）。
-- 未完成：媒体收发和真实 NapCat 联调。
+- 已完成：方案记录、基线确认、阶段 A（精确回复目标与 Telegram 白名单）、阶段 B（OneBot 文字通道）、阶段 C（身份绑定与同线程）、阶段 D 代码（本地 Docker 媒体收发）。
+- 未完成：真实 NapCat 登录与端到端联调；需要本机 Docker 中的 QQ 登录态和实际 QQ 号才能验收。
+
+## 10. 验证记录
+
+2026-08-13 本地验证：
+
+- `npm run check` 通过。
+- QQ、文件路由、Telegram 分块、stream delivery 等目标回归共 59 项通过。
+- `turn-gate-store` 仍有 5 个既有测试夹具错误：测试对象未补 `buildNewThreadOpeningContext` 或 `captureRuntimeTurnResult`；本次 QQ 路径新增测试全部通过。
+- 项目文档审计发现 8 个既有 `docs/lmc5` 断链和缺少文档索引等警告；本实施方案没有新增本地链接。

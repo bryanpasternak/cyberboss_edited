@@ -54,6 +54,12 @@ class ChannelDeliveryTargetResolver {
       };
     }
 
+    if (normalizedChannelId === "qq") {
+      const qqUserId = resolveQqUserId(requestedUserId);
+      if (!qqUserId) throw new Error("Cannot determine which QQ user should receive the file.");
+      return { channelId: "qq", provider: "qq", userId: qqUserId, contextToken: `qq:${qqUserId}` };
+    }
+
     const account = channel.resolveAccount?.();
     const targetUserId = normalizeText(requestedUserId) || resolvePreferredSenderId({
       config: this.config,
@@ -88,7 +94,10 @@ class ChannelDeliveryTargetResolver {
     if (channelId === "telegram" && !resolveTelegramChatId(contextToken || userId)) {
       throw new Error("Cannot determine which Telegram chat should receive the file.");
     }
-    if (channelId !== "telegram" && !contextToken) {
+    if (channelId === "qq" && !resolveQqUserId(contextToken || userId)) {
+      throw new Error("Cannot determine which QQ user should receive the file.");
+    }
+    if (!["telegram", "qq"].includes(channelId) && !contextToken) {
       throw new Error(`Cannot find a reply context for ${channelId} user ${userId}.`);
     }
     return { channelId, provider: channelId, userId, contextToken };
@@ -111,6 +120,12 @@ function resolveTelegramChatId(value) {
   return /^-?\d+$/.test(candidate) ? candidate : "";
 }
 
+function resolveQqUserId(value) {
+  const normalized = normalizeText(value);
+  const candidate = normalized.startsWith("qq:") ? normalized.slice(3).trim() : normalized;
+  return /^\d+$/.test(candidate) ? candidate : "";
+}
+
 function normalizeChannelId(value) {
   const normalized = normalizeText(value).toLowerCase();
   return normalized === "wechat" ? "weixin" : normalized;
@@ -123,5 +138,6 @@ function normalizeText(value) {
 module.exports = {
   ChannelDeliveryTargetResolver,
   normalizeContextTarget,
+  resolveQqUserId,
   resolveTelegramChatId,
 };

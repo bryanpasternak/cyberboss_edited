@@ -8,6 +8,7 @@ const { persistIncomingWeixinAttachments } = require("../adapters/channel/weixin
 const { createTelegramChannelAdapter } = require("../adapters/channel/telegram");
 const { persistIncomingTelegramAttachments } = require("../adapters/channel/telegram/media-receive");
 const { createQqChannelAdapter } = require("../adapters/channel/qq");
+const { persistIncomingQqAttachments } = require("../adapters/channel/qq/media-receive");
 const { createCodexRuntimeAdapter } = require("../adapters/runtime/codex");
 const { createClaudeCodeRuntimeAdapter } = require("../adapters/runtime/claudecode");
 const { findModelByQuery, resolveEffectiveModelForEffort } = require("../adapters/runtime/codex/model-catalog");
@@ -1177,6 +1178,12 @@ class CyberbossApp {
         stateDir: this.config.stateDir,
         apiBaseUrl: account?.apiBaseUrl || this.config.telegramApiBaseUrl,
         botToken: account?.botToken || this.config.telegramBotToken,
+        receivedAt: normalized.receivedAt,
+      });
+    } else if (sourceChannelId === "qq") {
+      persisted = await persistIncomingQqAttachments({
+        attachments,
+        stateDir: this.config.stateDir,
         receivedAt: normalized.receivedAt,
       });
     } else {

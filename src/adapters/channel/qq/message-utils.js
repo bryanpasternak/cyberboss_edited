@@ -20,7 +20,8 @@ function createQqInboundFilter() {
       if (messageId) seen.set(messageId, Date.now());
 
       const text = extractQqText(event.message, event.raw_message);
-      if (!text) return null;
+      const attachments = extractQqAttachments(event.message);
+      if (!text && !attachments.length) return null;
 
       const canonical = identityMap?.resolveCanonical?.({ channel: "qq", externalId: externalUserId }) || null;
       const canonicalSenderId = normalizeId(canonical?.senderId);
@@ -35,7 +36,7 @@ function createQqInboundFilter() {
         messageId,
         threadKey: `private:${externalUserId}`,
         text,
-        attachments: [],
+        attachments,
         contextToken: `qq:${externalUserId}`,
         receivedAt: Number.isFinite(timestampSeconds) && timestampSeconds > 0
           ? new Date(timestampSeconds * 1000).toISOString()
@@ -50,6 +51,31 @@ function createQqInboundFilter() {
       };
     },
   };
+}
+
+function extractQqAttachments(message) {
+  if (!Array.isArray(message)) return [];
+  return message.flatMap((segment, index) => {
+    const type = String(segment?.type || "").trim().toLowerCase();
+    const data = segment?.data && typeof segment.data === "object" ? segment.data : {};
+    const kind = {
+      image: "image",
+      file: "file",
+      record: "voice",
+      video: "video",
+    }[type];
+    if (!kind) return [];
+    const source = firstNonEmpty(data.url, data.file);
+    if (!source && !firstNonEmpty(data.file_id, data.id)) return [];
+    return [{
+      kind,
+      itemType: type,
+      fileName: firstNonEmpty(data.name, inferFileName(source, `${type}-${index + 1}`)),
+      source,
+      url: /^https?:\/\//i.test(source) ? source : "",
+      fileId: firstNonEmpty(data.file_id, data.id),
+    }];
+  });
 }
 
 function extractQqText(message, rawMessage = "") {
@@ -71,9 +97,29 @@ function pruneSeen(seen) {
   }
 }
 
+function inferFileName(source, fallback) {
+  const value = String(source || "").trim();
+  if (!value || value.startsWith("base64://")) return fallback;
+  try {
+    const parsed = new URL(value);
+    const name = decodeURIComponent(parsed.pathname.split("/").pop() || "");
+    return name || fallback;
+  } catch {
+    return value.replace(/\\/g, "/").split("/").pop() || fallback;
+  }
+}
+
+function firstNonEmpty(...values) {
+  for (const value of values) {
+    const normalized = value == null ? "" : String(value).trim();
+    if (normalized) return normalized;
+  }
+  return "";
+}
+
 function normalizeId(value) {
   if (value == null) return "";
   return String(value).trim();
 }
 
-module.exports = { createQqInboundFilter, extractQqText };
+module.exports = { createQqInboundFilter, extractQqAttachments, extractQqText };

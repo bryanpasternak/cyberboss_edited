@@ -1,5 +1,6 @@
 const { OneBotClient } = require("./onebot-client");
 const { createQqInboundFilter } = require("./message-utils");
+const { sendQqMedia } = require("./media-send");
 
 function createQqChannelAdapter(config, { identityMapStore = null, client = null } = {}) {
   const inboundFilter = createQqInboundFilter();
@@ -32,7 +33,7 @@ function createQqChannelAdapter(config, { identityMapStore = null, client = null
           channelId: "qq",
           showThinking: false,
           supportsTyping: false,
-          supportsAttachments: false,
+          supportsAttachments: true,
           supportsChunkConfig: false,
         },
       };
@@ -77,6 +78,16 @@ function createQqChannelAdapter(config, { identityMapStore = null, client = null
       });
     },
     async sendTyping() {},
+    async sendMedia({ userId, filePath = "", source = null, kind = "auto", caption = "", fileName = "", contextToken = "" }) {
+      const targetUserId = resolveQqUserId(userId, contextToken);
+      if (!targetUserId) throw new Error("QQ sendMedia requires a numeric user ID");
+      const resolvedPath = String(source?.path || filePath || "").trim();
+      if (!resolvedPath) throw new Error("QQ sendMedia requires a local file path");
+      return sendQqMedia({ oneBot, config, userId: targetUserId, filePath: resolvedPath, kind, caption, fileName });
+    },
+    async sendFile(payload) {
+      return this.sendMedia({ ...payload, kind: "auto" });
+    },
     close() {
       oneBot.close();
     },
