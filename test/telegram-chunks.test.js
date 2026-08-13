@@ -17,7 +17,7 @@ const {
   resolveTelegramMediaKind,
   splitForTelegram,
 } = require("../src/adapters/channel/telegram");
-const { extractAttachmentItems } = require("../src/adapters/channel/telegram/message-utils");
+const { createInboundFilter, extractAttachmentItems } = require("../src/adapters/channel/telegram/message-utils");
 
 test("extractTelegramInlineKeyboard removes a valid trailing directive", () => {
   const result = extractTelegramInlineKeyboard([
@@ -405,6 +405,53 @@ test("telegram inbound extracts audio animation and video notes", () => {
     ["animation", "animation"],
     ["video", "video_note"],
   ]);
+});
+
+test("telegram inbound rejects users outside the configured allowlist", () => {
+  const filter = createInboundFilter();
+  const normalized = filter.normalize({
+    update_id: 20,
+    message: {
+      message_id: 21,
+      date: 1_700_000_000,
+      text: "不应进入模型",
+      from: { id: 999, is_bot: false },
+      chat: { id: 999, type: "private" },
+    },
+  }, {
+    workspaceId: "default",
+    telegramAllowedChatIds: ["123"],
+  }, {
+    accountId: "telegram:test",
+  }, null);
+
+  assert.equal(normalized, null);
+});
+
+test("telegram inbound accepts a linked canonical identity in the allowlist", () => {
+  const filter = createInboundFilter();
+  const normalized = filter.normalize({
+    update_id: 22,
+    message: {
+      message_id: 23,
+      date: 1_700_000_000,
+      text: "允许进入模型",
+      from: { id: 999, is_bot: false },
+      chat: { id: 999, type: "private" },
+    },
+  }, {
+    workspaceId: "default",
+    telegramAllowedChatIds: ["susu"],
+  }, {
+    accountId: "telegram:test",
+  }, {
+    resolveCanonical() {
+      return { senderId: "susu", accountId: "wechat-account" };
+    },
+  });
+
+  assert.equal(normalized.senderId, "susu");
+  assert.equal(normalized.accountId, "wechat-account");
 });
 
 function buildTelegramTestConfig(tempDir) {

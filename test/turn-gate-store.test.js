@@ -387,6 +387,7 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
       senderId: "user-1",
       contextToken: "tg:123",
       provider: "telegram",
+      channelId: "telegram",
       chatId: "123",
       text: "ping",
     },
@@ -402,6 +403,7 @@ test("dispatchPreparedTurn binds reply target to the explicit turn id when runti
       userId: "user-1",
       contextToken: "tg:123",
       provider: "telegram",
+      channelId: "telegram",
     },
   }]);
   assert.deepEqual(queuedBindings, []);

@@ -735,6 +735,7 @@ class CyberbossApp {
         userId: prepared.senderId,
         contextToken: prepared.contextToken,
         provider: prepared.provider,
+        channelId: prepared.channelId || prepared.provider,
       };
       if (turn.turnId) {
         this.streamDelivery.bindReplyTargetForTurn({

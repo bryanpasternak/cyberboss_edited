@@ -32,11 +32,6 @@ function createInboundFilter() {
         seen.set(dedupKey, Date.now());
       }
 
-      const allowedChatIds = Array.isArray(config?.telegramAllowedChatIds) ? config.telegramAllowedChatIds : [];
-      const isAllowedChat = !allowedChatIds.length
-        || allowedChatIds.includes(chatId)
-        || allowedChatIds.includes(externalUserId);
-
       const text = extractInboundText(message);
       const attachments = extractAttachmentItems(message);
       if (!text && !attachments.length) {
@@ -50,6 +45,16 @@ function createInboundFilter() {
             : null);
       const canonicalSenderId = canonical?.senderId || "";
       const canonicalAccountId = canonical?.accountId || "";
+      const allowedChatIds = Array.isArray(config?.telegramAllowedChatIds)
+        ? config.telegramAllowedChatIds.map(String)
+        : [];
+      const isAllowedChat = !allowedChatIds.length
+        || allowedChatIds.includes(chatId)
+        || allowedChatIds.includes(externalUserId)
+        || (canonicalSenderId && allowedChatIds.includes(canonicalSenderId));
+      if (!isAllowedChat) {
+        return null;
+      }
 
       const createdAtMs = Number(message.date) > 0 ? Number(message.date) * 1000 : Date.now();
       return {
@@ -67,7 +72,6 @@ function createInboundFilter() {
         externalSenderId: externalUserId,
         canonicalSenderId,
         canonicalAccountId,
-        isAllowedChat,
         senderProfile: {
           firstName: typeof fromUser.first_name === "string" ? fromUser.first_name : "",
           lastName: typeof fromUser.last_name === "string" ? fromUser.last_name : "",
