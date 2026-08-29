@@ -2117,6 +2117,15 @@ class CyberbossApp {
       await reply(buildDesireUsageText());
       return;
     }
+    if (subcommand === "all") {
+      await reply(buildDesireStateText(service.getSnapshot({ includeExpiredResolved: true })));
+      return;
+    }
+    if (subcommand === "prune") {
+      const result = service.pruneExpiredResolved();
+      await reply(`${buildDesireStateText(service.getSnapshot())}\n\nRemoved stale resolved thoughts: ${result.removedCount}`);
+      return;
+    }
     if (subcommand === "on" || subcommand === "enable") {
       service.toggleDriven(true);
       await reply(`${buildDesireStateText(service.getSnapshot())}\n\nDesire-driven check-in context: on`);
@@ -2317,7 +2326,6 @@ class CyberbossApp {
       });
       return;
     }
-
     const sessionStore = this.runtimeAdapter.getSessionStore();
     const bindingKey = sessionStore.buildBindingKey({
       workspaceId: normalized.workspaceId,
@@ -2857,17 +2865,17 @@ class CyberbossApp {
       || channelDescription?.id
       || "weixin";
 
-    if (channelId === "telegram") {
+    if (channelId === "telegram" || channelId === "qq") {
       const bindings = this.identityMapStore.listBindingsForCanonical(userId);
-      const tgBinding = bindings.find((entry) => entry.channel === "telegram");
-      if (!tgBinding) {
+      const externalBinding = bindings.find((entry) => entry.channel === channelId);
+      if (!externalBinding) {
         return null;
       }
       return {
-        userId: tgBinding.externalId,
-        contextToken: `tg:${tgBinding.externalId}`,
-        provider: "telegram",
-        channelId: "telegram",
+        userId: externalBinding.externalId,
+        contextToken: `${channelId === "telegram" ? "tg" : "qq"}:${externalBinding.externalId}`,
+        provider: channelId,
+        channelId,
       };
     }
 
@@ -2985,6 +2993,12 @@ function buildDesireStateText(snapshot) {
   const drive = snapshot?.drive || state.drive || {};
   const intent = snapshot?.intent || {};
   const thoughts = Array.isArray(snapshot?.thoughts) ? snapshot.thoughts : [];
+  const storedThoughtCount = Number.isInteger(snapshot?.storedThoughtCount)
+    ? snapshot.storedThoughtCount
+    : thoughts.length;
+  const hiddenResolvedThoughtCount = Number.isInteger(snapshot?.hiddenResolvedThoughtCount)
+    ? snapshot.hiddenResolvedThoughtCount
+    : Math.max(0, storedThoughtCount - thoughts.length);
   const lines = [
     "Desire state",
     `intent: ${intent.wantAction || "none"} (${intent.driveKey || "unknown"} ${formatDriveNumber(intent.score)})`,
@@ -2993,8 +3007,11 @@ function buildDesireStateText(snapshot) {
     "",
     ...DRIVE_KEYS.map((key) => `${key}: ${formatDriveBar(drive[key])} ${formatDrivePercent(drive[key])}`),
     "",
-    `thoughts: ${thoughts.length}`,
-  ];
+    `thoughts: ${thoughts.length} visible / ${storedThoughtCount} saved`,
+    hiddenResolvedThoughtCount > 0
+      ? `hidden: ${hiddenResolvedThoughtCount} resolved thoughts older than ${snapshot?.resolvedDisplayDays || 5} days`
+      : "",
+  ].filter((line) => line !== "");
   if (thoughts.length) {
     thoughts.forEach((thought, index) => {
       const id = normalizeText(thought.id) || "-";
@@ -3021,6 +3038,8 @@ function buildDesireUsageText() {
     "/desire on",
     "/desire off",
     "/desire tick",
+    "/desire all",
+    "/desire prune",
     "/desire feed <drive> [flit|fixation] <text>",
     "/desire satisfy <web_browse|reach_out|reflect|follow_up|seduce|vent|none>",
   ].join("\n");

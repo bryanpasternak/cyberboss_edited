@@ -1,4 +1,5 @@
 const { WhereaboutsToolHost } = require("whereabouts-mcp");
+const { LifeCalendarToolHost } = require("./life-calendar-tool-host");
 const {
   STICKER_DESC_GUIDANCE,
   STICKER_DESC_FIELD_DESCRIPTION,
@@ -556,7 +557,7 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_sticker_send",
-    description: "Send a saved sticker back to the current WeChat chat by sticker id.",
+    description: "Send a saved sticker back to the chat associated with the current Cyberboss thread.",
     shortHint: "Send a saved sticker by id.",
     topics: ["sticker"],
     inputSchema: {
@@ -564,7 +565,7 @@ const PROJECT_TOOLS = [
       required: ["stickerId"],
       properties: {
         stickerId: { type: "string", description: "Sticker id such as stk_001." },
-        userId: { type: "string", description: "Optional explicit WeChat user id." },
+        userId: { type: "string", description: "Optional explicit recipient id for legacy calls without a current thread target." },
       },
       additionalProperties: false,
     },
@@ -905,6 +906,9 @@ const STATIC_EXTRA_TOOL_NAMES = new WhereaboutsToolHost({ service: null })
 
 function createExtraToolHosts(services = {}) {
   const hosts = [];
+  if (services.lifeCalendar) {
+    hosts.push(new LifeCalendarToolHost({ services: services.lifeCalendar }));
+  }
   if (services.whereabouts) {
     hosts.push(new WhereaboutsToolHost({ service: services.whereabouts }));
   }

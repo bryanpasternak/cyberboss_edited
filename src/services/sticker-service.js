@@ -129,6 +129,7 @@ class StickerService {
     const delivery = await this.channelFileService.sendToCurrentChat({
       filePath,
       userId,
+      kind: "animation",
     }, context);
     return {
       stickerId: normalizedStickerId,

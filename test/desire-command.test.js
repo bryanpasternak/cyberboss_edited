@@ -162,8 +162,36 @@ test("/desire displays every thought with complete untruncated text", async () =
     contextToken: "ctx-1",
   }, { args: "" });
 
-  assert.match(sent[0].text, /thoughts: 7/);
+  assert.match(sent[0].text, /thoughts: 7 visible \/ 7 saved/);
   assert.match(sent[0].text, /\[7\] 第7条完整念头/);
   assert.match(sent[0].text, new RegExp(thoughts[6].text));
   assert.match(sent[0].text, /status: resolved \(journaled\)/);
+});
+
+test("/desire all and prune expose archived resolved thought controls", async () => {
+  const sent = [];
+  const service = createDesireService();
+  service.getSnapshot = ({ includeExpiredResolved = false } = {}) => ({
+    ...createSnapshot(),
+    thoughts: [],
+    thoughtCount: 0,
+    storedThoughtCount: includeExpiredResolved ? 2 : 2,
+    hiddenResolvedThoughtCount: includeExpiredResolved ? 0 : 2,
+    resolvedDisplayDays: 5,
+  });
+  service.pruneExpiredResolved = () => ({ removedCount: 2 });
+  const appLike = {
+    projectServices: { desire: service },
+    currentChannel: { async sendText(payload) { sent.push(payload); } },
+  };
+
+  await CyberbossApp.prototype.handleDesireCommand.call(appLike, {
+    senderId: "user-1", contextToken: "ctx-1",
+  }, { args: "all" });
+  await CyberbossApp.prototype.handleDesireCommand.call(appLike, {
+    senderId: "user-1", contextToken: "ctx-1",
+  }, { args: "prune" });
+
+  assert.match(sent[0].text, /2 saved/);
+  assert.match(sent[1].text, /Removed stale resolved thoughts: 2/);
 });

@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "locale": "zh-CN",
+  "festivals": [
+    { "id": "new-years-day", "name": "元旦", "calendar": "solar", "month": 1, "day": 1 },
+    { "id": "valentines-day", "name": "情人节", "calendar": "solar", "month": 2, "day": 14 },
+    { "id": "labor-day", "name": "劳动节", "calendar": "solar", "month": 5, "day": 1 },
+    { "id": "national-day", "name": "国庆节", "calendar": "solar", "month": 10, "day": 1 },
+    { "id": "spring-festival", "name": "春节", "calendar": "lunar", "month": 1, "day": 1 },
+    { "id": "lantern-festival", "name": "元宵节", "calendar": "lunar", "month": 1, "day": 15 },
+    { "id": "dragon-boat-festival", "name": "端午节", "calendar": "lunar", "month": 5, "day": 5 },
+    { "id": "qixi", "name": "七夕", "calendar": "lunar", "month": 7, "day": 7 },
+    { "id": "mid-autumn-festival", "name": "中秋节", "calendar": "lunar", "month": 8, "day": 15 },
+    { "id": "double-ninth-festival", "name": "重阳节", "calendar": "lunar", "month": 9, "day": 9 }
+  ]
+}

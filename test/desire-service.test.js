@@ -116,3 +116,38 @@ test("recording user activity and completed sex persists explicit libido events"
   assert.equal(state.libidoState.lastSexAt, sexAt);
   assert.equal(state.drive.libido, 0.08);
 });
+
+test("resolved thoughts older than five days are hidden but remain saved", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-desire-visible-"));
+  const service = new DesireService({
+    store: new DesireStore({ filePath: path.join(dir, "desire-state.json") }),
+    resolvedDisplayDays: 5,
+  });
+  const resolvedAt = Date.parse("2026-08-20T12:00:00Z");
+  service.feedThought("已经写完的念头", "reflection", "flit", 0.5);
+  const thoughtId = service.getState().thoughts[0].id;
+  service.resolveThought(thoughtId, "journaled", resolvedAt);
+  service.feedThought("仍待处理的念头", "curiosity", "flit", 0.5);
+
+  const snapshot = service.getSnapshot({ nowMs: Date.parse("2026-08-26T12:00:01Z") });
+  assert.deepEqual(snapshot.thoughts.map((thought) => thought.text), ["仍待处理的念头"]);
+  assert.equal(snapshot.thoughtCount, 1);
+  assert.equal(snapshot.storedThoughtCount, 2);
+  assert.equal(snapshot.hiddenResolvedThoughtCount, 1);
+  assert.equal(service.getState().thoughts.length, 2);
+});
+
+test("stale resolved thoughts are only deleted by explicit pruning", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-desire-prune-"));
+  const service = new DesireService({
+    store: new DesireStore({ filePath: path.join(dir, "desire-state.json") }),
+    resolvedDisplayDays: 5,
+  });
+  const resolvedAt = Date.parse("2026-08-20T12:00:00Z");
+  service.feedThought("陈旧完成念头", "reflection", "flit", 0.5);
+  service.resolveThought(service.getState().thoughts[0].id, "faded", resolvedAt);
+
+  const result = service.pruneExpiredResolved(Date.parse("2026-08-26T12:00:01Z"));
+  assert.equal(result.removedCount, 1);
+  assert.equal(service.getState().thoughts.length, 0);
+});

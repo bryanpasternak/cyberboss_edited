@@ -82,6 +82,37 @@ test("delivery target resolution never falls across channels after a Telegram fa
   }), /Telegram chat/);
 });
 
+test("an explicit channel overrides the current turn and resolves its bound external recipient", () => {
+  const channels = new Map([
+    ["telegram", createChannel("telegram", [])],
+    ["weixin", createChannel("weixin", [])],
+  ]);
+  const resolver = new ChannelDeliveryTargetResolver({
+    config: {},
+    channels,
+    identityMapStore: {
+      listBindingsForCanonical(senderId) {
+        assert.equal(senderId, "susu");
+        return [{ channel: "telegram", externalId: "12345" }];
+      },
+    },
+  });
+
+  assert.deepEqual(resolver.resolve({
+    channelId: "telegram",
+    context: {
+      provider: "weixin",
+      senderId: "susu",
+      contextToken: "wx-context-token",
+    },
+  }), {
+    channelId: "telegram",
+    provider: "telegram",
+    userId: "12345",
+    contextToken: "tg:12345",
+  });
+});
+
 function createChannel(channelId, sent) {
   return {
     describe() { return { id: channelId }; },

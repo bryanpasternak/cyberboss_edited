@@ -1,0 +1,4 @@
+# Local speech-to-text. Pulls in ctranslate2 + tokenizers.
+# Model weights are downloaded on first use into runtime/models/ (or
+# MOVIE_BUDDY_MODEL_ROOT) and are NOT part of this repository.
+faster-whisper>=1.0.0

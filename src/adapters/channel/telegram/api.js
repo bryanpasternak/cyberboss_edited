@@ -49,15 +49,30 @@ function resolveProxyAgent() {
 }
 
 function fetchWithProxy(url, init = {}) {
-  const agent = resolveProxyAgent();
-  if (agent) {
+  const runtime = resolveFetchRuntime();
+  return runtime.fetch(url, runtime.dispatcher
+    ? { ...init, dispatcher: runtime.dispatcher }
+    : init);
+}
+
+function resolveFetchRuntime() {
+  const dispatcher = resolveProxyAgent();
+  if (dispatcher) {
     const undici = loadUndici();
-    if (undici?.fetch) {
-      return undici.fetch(url, { ...init, dispatcher: agent });
+    if (!undici?.fetch || !undici?.FormData || typeof Blob !== "function") {
+      throw new Error("telegram proxy delivery requires undici fetch and FormData plus a Blob implementation");
     }
-    return fetch(url, { ...init, dispatcher: agent });
+    return {
+      fetch: undici.fetch,
+      FormData: undici.FormData,
+      Blob,
+      dispatcher,
+    };
   }
-  return fetch(url, init);
+  if (typeof fetch !== "function" || typeof FormData !== "function" || typeof Blob !== "function") {
+    throw new Error("telegram delivery requires fetch, FormData, and Blob");
+  }
+  return { fetch, FormData, Blob, dispatcher: null };
 }
 
 function normalizeBaseUrl(value) {
@@ -287,14 +302,17 @@ async function sendAnimation({ baseUrl, botToken, chatId, fileBuffer, fileName, 
 
 async function uploadFile({ baseUrl, botToken, method, chatId, fileBuffer, fileName, caption, fileField }) {
   const url = buildEndpoint(baseUrl, botToken, method);
-  const form = new FormData();
+  const runtime = resolveFetchRuntime();
+  const form = new runtime.FormData();
   form.append("chat_id", String(chatId));
   if (caption) {
     form.append("caption", String(caption));
   }
-  const blob = new Blob([fileBuffer]);
+  const blob = new runtime.Blob([fileBuffer]);
   form.append(fileField, blob, fileName || `attachment-${Date.now()}`);
-  const response = await fetchWithProxy(url, { method: "POST", body: form });
+  const response = await runtime.fetch(url, runtime.dispatcher
+    ? { method: "POST", body: form, dispatcher: runtime.dispatcher }
+    : { method: "POST", body: form });
   const raw = await response.text();
   if (!response.ok) {
     throw new Error(`telegram ${method} http ${response.status}: ${truncate(raw, 256)}`);

@@ -15,6 +15,7 @@ const { TimelineService } = require("../services/timeline-service");
 const { createDesireService } = require("../services/desire-service");
 const { createChatMemoryRuntime } = require("../services/chat-memory");
 const { createMementoServices } = require("../services/mementos");
+const { createLifeCalendarServices } = require("../services/life-calendar");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
 const { WhereaboutsService } = require("whereabouts-mcp");
@@ -46,6 +47,7 @@ function createProjectTooling(config, options = {}) {
     config,
     sessionStore,
     channels,
+    identityMapStore,
     lastActiveStore,
     defaultChannelId: config.defaultOutboundChannel,
   });
@@ -55,6 +57,10 @@ function createProjectTooling(config, options = {}) {
   });
   const chatMemoryRuntime = createChatMemoryRuntime({ config });
   const mementos = createMementoServices(config);
+  const lifeCalendar = createLifeCalendarServices({
+    stateDir: config.stateDir,
+    timezone: "Asia/Shanghai",
+  });
   const services = {
     diary: new DiaryService({ config }),
     reminder: new ReminderService({ config, sessionStore }),
@@ -68,6 +74,7 @@ function createProjectTooling(config, options = {}) {
     gift: mementos.gift,
     postcard: mementos.postcard,
     travelCard: mementos.travelCard,
+    lifeCalendar,
     sticker: new StickerService({ config, channelAdapter, sessionStore, channelFileService: channelFile }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),
     whereabouts: new WhereaboutsService({

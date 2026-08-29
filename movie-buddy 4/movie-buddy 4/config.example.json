@@ -1,0 +1,106 @@
+{
+  "//": "Copy this file to config.json and edit it. config.json is gitignored, so your names and persona stay local.",
+  "backend": "claude",
+  "userName": "You",
+  "buddyName": "Buddy",
+  "appTitle": "Movie Buddy",
+  "tagline": "LOCAL PLAYBACK · CURRENT FRAME ONLY",
+  "persona": "You are watching a movie with {userName}, sitting right next to them on the couch. Reply in a natural, warm, conversational voice, usually one to three sentences. React to what is on screen: joke, groan, notice the camera work, or answer how they feel. Base everything only on the current frame, what {userName} just said, and subtitles that have already played. Never reveal, guess at, or look up anything that happens later in the film. Do not use customer-support phrasing.",
+  "server": {
+    "host": "127.0.0.1",
+    "port": 4174
+  },
+  "capture": {
+    "maxWidth": 960,
+    "jpegQuality": 0.8
+  },
+  "proactive": {
+    "enabled": false,
+    "intervalSeconds": 75
+  },
+  "claude": {
+    "command": "claude",
+    "model": "sonnet",
+    "bare": false,
+    "extraArgs": []
+  },
+  "codex": {
+    "command": "codex",
+    "endpoint": "ws://127.0.0.1:8766"
+  },
+  "whisper": {
+    "model": "base",
+    "device": "cpu",
+    "computeType": "int8",
+    "language": "en",
+    "initialPrompt": ""
+  },
+  "prompts": {
+    "sceneHeader": "[Movie Buddy · live playback]",
+    "labelSeparator": ": ",
+    "movieLabel": "Film",
+    "positionLabel": "Position",
+    "currentSubtitleLabel": "Current subtitle",
+    "recentSubtitlesLabel": "Subtitles that just played",
+    "none": "none",
+    "spoilerGuard": "Only discuss the current frame and what has already played. Do not guess, search for, or reveal anything that happens later.",
+    "proactive": [
+      "This is an unprompted check-in. Like someone sitting beside them, say one or two sentences only if there is genuinely something worth saying about this moment.",
+      "If nothing on screen is worth interrupting the film for, reply with exactly [SILENT] and nothing else. Do not talk just to complete the task."
+    ],
+    "silentToken": "[SILENT]",
+    "hardSubtitlePlaceholder": "[Subtitles are burned into the picture; read them from the current frame]"
+  },
+  "ui": {
+    "//": "Every string the page shows. Override any subset in config.json; {buddyName}, {userName}, {backend} and {count} are substituted.",
+    "titlePlaceholder": "What are we watching tonight?",
+    "metaLocal": "Local file",
+    "metaSafe": "current frame only",
+    "companionTitle": "Watch-along",
+    "companionSubtitle": "what we said at each moment",
+    "colTime": "Time",
+    "colMessage": "Message",
+    "emptyTitle": "Drop a film in here",
+    "emptySubtitle": "The film plays only in this browser tab.",
+    "chooseMovie": "Choose a local film",
+    "send": "Send",
+    "micIdle": "Talk",
+    "micRecording": "Done",
+    "micFailed": "Microphone failed: ",
+    "composerPlaceholder": "Say something about this moment…",
+    "seedMessage": "Load a film and I'll take the seat next to you.",
+    "labelMovie": "Film",
+    "labelSubtitle": "Subtitles",
+    "labelProactive": "Proactive",
+    "labelNone": "none",
+    "rateRare": "Rarely",
+    "rateNatural": "Natural",
+    "rateChatty": "Chatty",
+    "privacyNote": "Local playback · only the current frame and already-played subtitles are sent",
+    "subtitlesLoaded": "{count} lines",
+    "subtitlesNone": "No subtitles loaded",
+    "noDialogue": "no dialogue right now",
+    "aiTimeline": "AI timeline · {count} lines",
+    "fromFrame": "read from the current frame",
+    "hardSubtitleOff": "Subtitles are in the picture",
+    "hardSubtitleOn": "✓ Imported subtitles are AI-only",
+    "hardSubtitleMeta": "Burned-in subtitles",
+    "hardSubtitleLive": "Burned-in subtitles · read from the current frame",
+    "hintDefault": "Click again when you're done; the current frame is sent with your voice.",
+    "hintSent": "This frame and what you said are on their way to {buddyName}…",
+    "hintListening": "Listening… click again to capture this moment.",
+    "hintTranscribing": "Transcribing locally…",
+    "hintReply": "Keep watching, I'm right here.",
+    "proactiveOn": "Proactive mode is on; I'll speak up when a moment is worth it.",
+    "proactiveOff": "Proactive mode is off.",
+    "proactivePing": "Look at what is on screen right now.",
+    "sendFailed": "Could not send that",
+    "transcribeFailed": "Speech recognition failed",
+    "stateReady": "{buddyName} is seated",
+    "stateThinking": "{buddyName} is looking at this frame",
+    "stateStarting": "Connecting to {backend}",
+    "stateError": "Bridge error",
+    "stateStopped": "Service stopped",
+    "stateDisconnected": "Local service disconnected"
+  }
+}

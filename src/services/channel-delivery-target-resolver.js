@@ -1,10 +1,11 @@
 const { resolvePreferredSenderId } = require("../core/default-targets");
 
 class ChannelDeliveryTargetResolver {
-  constructor({ config, sessionStore, channels, lastActiveStore = null, defaultChannelId = "" }) {
+  constructor({ config, sessionStore, channels, identityMapStore = null, lastActiveStore = null, defaultChannelId = "" }) {
     this.config = config;
     this.sessionStore = sessionStore;
     this.channels = channels instanceof Map ? channels : new Map();
+    this.identityMapStore = identityMapStore;
     this.lastActiveStore = lastActiveStore;
     this.defaultChannelId = normalizeText(defaultChannelId)
       || normalizeText(config?.defaultOutboundChannel)
@@ -13,14 +14,16 @@ class ChannelDeliveryTargetResolver {
 
   resolve({ context = {}, userId = "", channelId = "" } = {}) {
     const contextTarget = normalizeContextTarget(context);
-    if (contextTarget) {
-      return this.ensureUsableTarget(contextTarget);
-    }
-
     const explicitUserId = normalizeText(userId);
     const explicitChannelId = normalizeChannelId(channelId);
     if (explicitChannelId) {
-      return this.ensureUsableTarget(this.buildTargetForChannel(explicitChannelId, explicitUserId));
+      const requestedUserId = explicitUserId
+        || (contextTarget?.channelId === explicitChannelId ? contextTarget.userId : normalizeText(context?.senderId));
+      return this.ensureUsableTarget(this.buildTargetForChannel(explicitChannelId, requestedUserId));
+    }
+
+    if (contextTarget) {
+      return this.ensureUsableTarget(contextTarget);
     }
 
     const canonicalSenderId = explicitUserId || normalizeText(context?.senderId);
@@ -42,7 +45,8 @@ class ChannelDeliveryTargetResolver {
     }
 
     if (normalizedChannelId === "telegram") {
-      const chatId = resolveTelegramChatId(requestedUserId);
+      const chatId = resolveTelegramChatId(requestedUserId)
+        || this.resolveBoundExternalId("telegram", requestedUserId);
       if (!chatId) {
         throw new Error("Cannot determine which Telegram chat should receive the file.");
       }
@@ -55,7 +59,8 @@ class ChannelDeliveryTargetResolver {
     }
 
     if (normalizedChannelId === "qq") {
-      const qqUserId = resolveQqUserId(requestedUserId);
+      const qqUserId = resolveQqUserId(requestedUserId)
+        || this.resolveBoundExternalId("qq", requestedUserId);
       if (!qqUserId) throw new Error("Cannot determine which QQ user should receive the file.");
       return { channelId: "qq", provider: "qq", userId: qqUserId, contextToken: `qq:${qqUserId}` };
     }
@@ -79,6 +84,19 @@ class ChannelDeliveryTargetResolver {
       userId: targetUserId,
       contextToken,
     };
+  }
+
+  resolveBoundExternalId(channelId, canonicalSenderId) {
+    const normalizedSenderId = normalizeText(canonicalSenderId);
+    if (!normalizedSenderId || typeof this.identityMapStore?.listBindingsForCanonical !== "function") {
+      return "";
+    }
+    const binding = this.identityMapStore.listBindingsForCanonical(normalizedSenderId)
+      .find((entry) => normalizeChannelId(entry?.channel) === channelId);
+    const externalId = normalizeText(binding?.externalId);
+    if (channelId === "telegram") return resolveTelegramChatId(externalId);
+    if (channelId === "qq") return resolveQqUserId(externalId);
+    return externalId;
   }
 
   ensureUsableTarget(target) {

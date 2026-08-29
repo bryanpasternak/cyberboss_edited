@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Movie Buddy</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">◉</span>
+        <span id="brandName">Movie Buddy</span>
+      </div>
+      <p class="eyebrow" id="tagline"></p>
+      <div class="bridge-state"><span id="stateDot"></span><span id="stateText">Connecting</span></div>
+    </header>
+
+    <section class="title-block">
+      <h1 id="pageTitle">What are we watching tonight?</h1>
+      <div class="video-meta">
+        <span>◷ <b id="metaTime">00:00:00</b></span>
+        <span>▣ <span id="metaLocal">Local file</span></span>
+        <span>CC <b id="metaSubtitle">No subtitles loaded</b></span>
+        <span class="safe-tag" id="metaSafe">current frame only</span>
+      </div>
+    </section>
+
+    <section class="screen-grid">
+      <aside class="companion">
+        <div class="companion-head">
+          <div class="avatar" id="avatar">B</div>
+          <div><strong id="companionTitle">Watch-along</strong><small id="companionSubtitle">what we said at each moment</small></div>
+        </div>
+        <div class="timeline-head"><span id="colTime">Time</span><span id="colMessage">Message</span></div>
+        <div class="conversation" id="conversation">
+          <button class="timeline-message buddy" id="seedMessage" data-seconds="0">
+            <time>00:00</time><span><b>Buddy</b>Load a film and I'll take the seat next to you.</span>
+          </button>
+        </div>
+      </aside>
+
+      <div class="player-column">
+        <div class="cinema" id="dropZone">
+          <video id="movie" controls playsinline></video>
+          <div class="empty-state" id="emptyState">
+            <div class="reel">◉</div>
+            <h2 id="emptyTitle">Drop a film in here</h2>
+            <p id="emptySubtitle">The film plays only in this browser tab.</p>
+            <button class="primary" id="chooseMovie">Choose a local film</button>
+          </div>
+          <div class="subtitle" id="subtitle"></div>
+          <div class="buddy-overlay" id="buddyOverlay"></div>
+          <button class="fullscreen" id="fullscreen" title="Fullscreen">⛶</button>
+        </div>
+        <div class="composer player-composer">
+          <div class="live-context" id="liveContext">No subtitles loaded</div>
+          <textarea id="message" rows="1" placeholder="Say something about this moment…"></textarea>
+          <div class="composer-actions">
+            <button class="mic" id="mic" title="Start/stop recording"><span>●</span> <span id="micLabel">Talk</span></button>
+            <button class="send" id="send">Send</button>
+          </div>
+          <p class="hint" id="hint">Click again when you're done; the current frame is sent with your voice.</p>
+        </div>
+      </div>
+    </section>
+
+    <footer class="tray">
+      <label class="file-pill"><span id="labelMovie">Film</span><input id="movieInput" type="file" accept="video/*,.mkv"></label>
+      <span id="movieName">none</span>
+      <label class="file-pill"><span id="labelSubtitle">Subtitles</span><input id="subtitleInput" type="file" accept=".srt,.vtt,text/vtt"></label>
+      <span id="subtitleName">none</span>
+      <button class="file-pill hard-subtitle" id="hardSubtitle" type="button">Subtitles are in the picture</button>
+      <label class="proactive-control"><input id="proactiveEnabled" type="checkbox"> <span id="labelProactive">Proactive</span></label>
+      <select class="proactive-rate" id="proactiveRate" aria-label="Proactive frequency">
+        <option value="120">Rarely</option>
+        <option value="75" selected>Natural</option>
+        <option value="45">Chatty</option>
+      </select>
+      <span class="privacy" id="privacyNote">Local playback · only the current frame and already-played subtitles are sent</span>
+    </footer>
+  </main>
+  <canvas id="frameCanvas" hidden></canvas>
+  <script src="/app.js"></script>
+</body>
+</html>

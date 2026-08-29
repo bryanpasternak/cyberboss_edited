@@ -109,6 +109,7 @@ function readConfig() {
     desireStateFile: path.join(stateDir, "desire-state.json"),
     desireDriven: readBoolEnv("CYBERBOSS_DESIRE_DRIVEN"),
     desireThoughtMax: readIntEnv("CYBERBOSS_DESIRE_THOUGHT_MAX") || 80,
+    desireResolvedDisplayDays: readIntEnv("CYBERBOSS_DESIRE_RESOLVED_DISPLAY_DAYS") || 5,
     libidoConfig: {
       enabled: readOptionalBoolEnv("CYBERBOSS_LIBIDO_ENABLED") !== false,
       timeZone: readTextEnv("CYBERBOSS_LIBIDO_TIMEZONE") || "Asia/Shanghai",

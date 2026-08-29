@@ -157,8 +157,8 @@ const COMMAND_GROUPS = [
         action: "desire.control",
         summary: "Inspect or control the local desire system",
         terminal: [],
-        weixin: ["/desire", "/desire on", "/desire off"],
-        telegram: ["/desire", "/desire on", "/desire off"],
+        weixin: ["/desire", "/desire all", "/desire prune", "/desire on", "/desire off"],
+        telegram: ["/desire", "/desire all", "/desire prune", "/desire on", "/desire off"],
         status: "active",
       },
       {

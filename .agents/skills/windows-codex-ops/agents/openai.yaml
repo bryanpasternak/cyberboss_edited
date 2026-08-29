@@ -1,0 +1,4 @@
+interface:
+  display_name: "Windows Codex Ops"
+  short_description: "Diagnose Windows, PowerShell, sandbox, and patching friction"
+  default_prompt: "Use $windows-codex-ops to diagnose this Windows-specific Codex workflow problem."

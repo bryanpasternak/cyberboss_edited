@@ -29,6 +29,7 @@
     "@huggingface/transformers": "^4.2.0",
     "dotenv": "^16.4.7",
     "qrcode-terminal": "0.12.0",
+    "sharp": "^0.34.5",
     "timeline-for-agent": "github:WenXiaoWendy/timeline-for-agent#main",
     "undici": "^8.3.0",
     "whereabouts-mcp": "github:WenXiaoWendy/whereabouts-mcp#main",

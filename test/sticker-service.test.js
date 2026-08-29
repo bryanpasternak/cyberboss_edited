@@ -4,6 +4,8 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 
+const PROJECT_ROOT = path.resolve(__dirname, "..");
+
 const { saveWeixinAccount } = require("../src/adapters/channel/weixin/account-store");
 const { persistContextToken } = require("../src/adapters/channel/weixin/context-token-store");
 const {
@@ -23,10 +25,10 @@ function createConfig(overrides = {}) {
     stickerAssetsDir: path.join(stickersDir, "assets"),
     stickersIndexFile: path.join(stickersDir, "index.json"),
     stickerTagsFile: path.join(stickersDir, "tags.json"),
-    stickersTemplateDir: path.join("/Users/tingyiwen/Dev/cyberboss", "templates", "stickers"),
-    stickersTemplateIndexFile: path.join("/Users/tingyiwen/Dev/cyberboss", "templates", "stickers", "index.json"),
-    stickerTagsTemplateFile: path.join("/Users/tingyiwen/Dev/cyberboss", "templates", "stickers", "tags.json"),
-    stickerNormalizeGifScript: path.join("/Users/tingyiwen/Dev/cyberboss", "scripts", "normalize-sticker-gif.js"),
+    stickersTemplateDir: path.join(PROJECT_ROOT, "templates", "stickers"),
+    stickersTemplateIndexFile: path.join(PROJECT_ROOT, "templates", "stickers", "index.json"),
+    stickerTagsTemplateFile: path.join(PROJECT_ROOT, "templates", "stickers", "tags.json"),
+    stickerNormalizeGifScript: path.join(PROJECT_ROOT, "scripts", "normalize-sticker-gif.js"),
     accountsDir: path.join(stateDir, "accounts"),
     weixinBaseUrl: "https://ilinkai.weixin.qq.com",
     workspaceId: "default",
@@ -266,6 +268,7 @@ test("sticker service updates, picks, sends, and deletes saved stickers", async 
   assert.equal(delivery.stickerId, savedItem.stickerId);
   assert.equal(sentFiles.length, 1);
   assert.equal(sentFiles[0].args.filePath, savedItem.filePath);
+  assert.equal(sentFiles[0].args.kind, "animation");
 
   const deleted = await service.delete({
     items: [{

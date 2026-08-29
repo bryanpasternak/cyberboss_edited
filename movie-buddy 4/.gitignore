@@ -1,0 +1,23 @@
+# Local runtime state: screenshots, message queue, bridge state, model cache
+runtime/
+
+# Your personal configuration (names, persona, model choice)
+config.json
+
+# Media never belongs in the repo
+*.mp4
+*.mkv
+*.avi
+*.mov
+*.webm
+
+# Subtitles, except the ones under examples/
+*.srt
+*.vtt
+!examples/**/*.srt
+!examples/**/*.vtt
+
+# Python / Node noise
+__pycache__/
+*.pyc
+node_modules/

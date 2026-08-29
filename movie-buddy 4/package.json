@@ -1,0 +1,17 @@
+{
+  "name": "movie-buddy",
+  "version": "0.2.0",
+  "description": "A local movie-watching companion: play your own video, and an AI sitting next to you sees only the current frame and the subtitles that have already played.",
+  "license": "MIT",
+  "author": "yanjun62 (https://github.com/yanjun62)",
+  "private": false,
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "scripts": {
+    "check": "node --check claude_bridge.js && node --check codex_bridge.js && node --check load_config.js"
+  },
+  "dependencies": {},
+  "keywords": ["movie", "subtitles", "local-first", "claude-code", "codex", "whisper"]
+}

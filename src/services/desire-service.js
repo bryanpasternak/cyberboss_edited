@@ -23,13 +23,14 @@ const { DesireStore } = require("./desire/desire-store");
 const { scanTriggers } = require("./desire/desire-trigger");
 
 class DesireService {
-  constructor({ store, drivenEnabled = false, thoughtMax = 80, libidoConfig = {} } = {}) {
+  constructor({ store, drivenEnabled = false, thoughtMax = 80, resolvedDisplayDays = 5, libidoConfig = {} } = {}) {
     if (!store) {
       throw new Error("DesireService requires a store");
     }
     this.store = store;
     this.drivenEnabled = Boolean(drivenEnabled);
     this.thoughtMax = Math.max(1, Number.parseInt(thoughtMax, 10) || 80);
+    this.resolvedDisplayDays = Math.max(1, Number.parseInt(resolvedDisplayDays, 10) || 5);
     this.libidoConfig = { ...DEFAULT_LIBIDO_CONFIG, ...(libidoConfig || {}) };
     this.ensureInitialized();
   }
@@ -49,24 +50,44 @@ class DesireService {
     return normalizeState(this.store.load());
   }
 
-  getSnapshot() {
+  getSnapshot({ includeExpiredResolved = false, nowMs = Date.now() } = {}) {
     const state = this.getState();
     const scores = computeScores(state.drive, state.thoughts);
     const intent = pickIntent(state);
+    const thoughts = includeExpiredResolved
+      ? state.thoughts
+      : filterVisibleThoughts(state.thoughts, nowMs, this.resolvedDisplayDays);
     return {
       state,
       drive: state.drive,
       scores,
       intent,
       availableActions: ["web_browse", "reach_out", "reflect", "follow_up", "seduce", "vent", "none"],
-      thoughtCount: state.thoughts.length,
-      thoughts: state.thoughts,
+      thoughtCount: thoughts.length,
+      storedThoughtCount: state.thoughts.length,
+      hiddenResolvedThoughtCount: state.thoughts.length - thoughts.length,
+      resolvedDisplayDays: this.resolvedDisplayDays,
+      thoughts,
       drivenBehaviorEnabled: state.drivenBehaviorEnabled,
     };
   }
 
   tick(nowMs = Date.now()) {
     return this.store.update((state) => this.trimThoughts(tick(state, nowMs, this.libidoConfig)));
+  }
+
+  pruneExpiredResolved(nowMs = Date.now()) {
+    let removedCount = 0;
+    const state = this.store.update((current) => {
+      const normalized = normalizeState(current);
+      const thoughts = normalized.thoughts.filter((thought) => {
+        const expired = isExpiredResolvedThought(thought, nowMs, this.resolvedDisplayDays);
+        if (expired) removedCount += 1;
+        return !expired;
+      });
+      return { ...normalized, thoughts };
+    });
+    return { removedCount, state };
   }
 
   recordUserActivity(at = Date.now()) {
@@ -243,12 +264,28 @@ function createDesireService(config, options = {}) {
     store,
     drivenEnabled: options.drivenEnabled ?? config.desireDriven,
     thoughtMax: options.thoughtMax ?? config.desireThoughtMax,
+    resolvedDisplayDays: options.resolvedDisplayDays ?? config.desireResolvedDisplayDays,
     libidoConfig: options.libidoConfig ?? config.libidoConfig,
   });
+}
+
+function filterVisibleThoughts(thoughts, nowMs, resolvedDisplayDays) {
+  return (Array.isArray(thoughts) ? thoughts : [])
+    .filter((thought) => !isExpiredResolvedThought(thought, nowMs, resolvedDisplayDays));
+}
+
+function isExpiredResolvedThought(thought, nowMs, resolvedDisplayDays) {
+  if (thought?.status !== "resolved") return false;
+  const completedAt = Number(thought.resolvedAt) || Number(thought.bornAt) || 0;
+  if (!completedAt) return false;
+  const maxAgeMs = resolvedDisplayDays * 24 * 60 * 60_000;
+  return Number(nowMs) - completedAt > maxAgeMs;
 }
 
 module.exports = {
   DRIVE_KEYS,
   DesireService,
   createDesireService,
+  filterVisibleThoughts,
+  isExpiredResolvedThought,
 };
