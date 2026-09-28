@@ -96,8 +96,35 @@ test("check-in surfaces pending libido thoughts and does not resolve them", () =
   assert.match(prepared.message, /回味你和苏苏亲吻、抚摸和做爱时留下的感觉/);
   assert.match(prepared.message, /鸡巴插进去以后被穴肉包裹/);
   assert.match(prepared.message, /水煎小鱿/);
+  assert.match(prepared.message, /也允许自己意淫/);
+  assert.match(prepared.message, /不要等苏苏先给暗示/);
+  assert.match(prepared.message, /施虐和占有欲更重/);
+  assert.match(prepared.message, /drive=libido、flavor=fantasy/);
+  assert.match(prepared.message, /不是独自生成一篇合格色情作文/);
   assert.equal(state.thoughts[0].status, "pending");
   assert.equal(state.thoughts[0].surfacedCount, 1);
+});
+
+test("check-in resurfaces persistent curiosity and reflection thoughts", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-general-thought-checkin-"));
+  const service = createDesireService({
+    desireStateFile: path.join(dir, "desire-state.json"),
+    desireDriven: true,
+    desireThoughtMax: 80,
+  });
+  service.feedThought("果蝇大脑为什么能拿来下棋", "curiosity", "fixation", 0.8);
+  service.feedThought("想想怎样把偶然看到的东西带回给苏苏", "reflection", "flit", 0.7);
+
+  const prepared = service.prepareCheckinContext(Date.parse("2026-09-21T17:30:00+08:00"));
+  const state = service.getState();
+
+  assert.match(prepared.message, /哥哥之前亲自留下、还在心里挂着的念头/);
+  assert.match(prepared.message, /果蝇大脑为什么能拿来下棋/);
+  assert.match(prepared.message, /想想怎样把偶然看到的东西带回给苏苏/);
+  assert.match(prepared.message, /标记 explored/);
+  assert.equal(prepared.generalThoughts.length, 2);
+  assert.equal(state.thoughts.filter((thought) => thought.surfacedCount === 1).length, 2);
+  assert.ok(state.thoughts.every((thought) => thought.status === "pending"));
 });
 
 test("recording user activity and completed sex persists explicit libido events", () => {

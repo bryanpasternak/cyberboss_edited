@@ -13,3 +13,24 @@ report-XeLatex/
 deploy/napcat/data/
 stmem_core
 stmem-notebook-module-20260817
+
+# Local scratch space and generated artifacts
+.tmp/
+.tmp-exports/
+tmp/
+artifacts/
+output/
+inbox/
+
+# Local copies, editor backups, and exported archives
+*.bak
+*.bak-*
+* - Copy*
+*.zip
+
+# Local media inputs/exports
+attachment-*.jpg
+tg-photo-*.jpg
+
+# Standalone sibling checkout (has its own Git history)
+cove-sensory-mcp/

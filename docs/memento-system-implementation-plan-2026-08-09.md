@@ -1,7 +1,7 @@
 # 小家纪念物系统实现计划
 
 > 日期：2026-08-09  
-> 状态：第一版已实施
+> 状态：第一版已实施；2026-08-30 已增加会话代生图与 HTML 明信片渲染
 
 ## 目标
 
@@ -33,7 +33,7 @@ GiftService / PostcardService / TravelCardService
                     ↓
 MementoStore + MementoAssets
                     ↓
-~/.cyberboss/mementos/<id>/record.json + assets/*.svg
+~/.cyberboss/mementos/<id>/record.json + assets/*.{svg,png}
 ```
 
 约束：
@@ -74,6 +74,8 @@ giftService.open({ id, actorId })
 giftService.collect({ id, actorId })
 
 postcardService.send(input)
+postcardService.prepare(input)
+postcardService.finalize({ id, sourceImagePath, useFallback })
 postcardService.flip({ id, actorId })
 
 travelCardService.create(input)
@@ -89,10 +91,35 @@ travelCardService.create(input)
 - `cyberboss_gift_open`
 - `cyberboss_gift_collect`
 - `cyberboss_postcard_send`
+- `cyberboss_postcard_prepare`
+- `cyberboss_postcard_finalize`
 - `cyberboss_postcard_flip`
 - `cyberboss_travel_card_create`
 
 创建工具返回 public view、生成的 SVG 路径和适合渠道使用的 callback 标记。发送文件仍可复用现有 `cyberboss_channel_send_file`；未来可把“创建＋发送”收进 channel-aware orchestrator，不改变核心 service。
+
+## 2026-08-30 明信片视觉升级
+
+新版插画明信片采用两段式流程，Cyberboss 不需要持有生图 API key：
+
+```text
+postcard_prepare 保存正文草稿并返回 artRequest
+        ↓
+当前 agent 调用自己可用的生图工具
+        ↓
+postcard_finalize 安全导入本地图片
+        ↓
+HTML/CSS 排版并通过无界面 Edge/Chrome 导出 PNG
+```
+
+- `1–45` 字使用一句话卡，`46–180` 字使用短笺卡，`181` 字以上使用长信；
+- 固定卡渲染后仍会检查真实 DOM 溢出，放不下就升级版式，不裁切正文；
+- 长信正面固定为信封封面，背面信纸高度随正文增长；
+- 生图 prompt 只使用 `visualBrief`，不复制私密正文；
+- agent 生成的临时图片经尺寸、格式和导入目录校验后复制进纪念物资产目录；
+- `agent / builtin / api` 共用 art provider 契约，目前默认 `agent`，API provider 可后续注入；
+- 浏览器或 HTML 渲染失败时生成可完整保留正文的 SVG fallback；
+- 原有 `postcard_send`、旧 SVG 记录和翻面 callback 保持兼容。
 
 ## Telegram callback
 

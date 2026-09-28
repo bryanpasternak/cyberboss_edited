@@ -13,7 +13,7 @@ const INTERNAL_CHECKIN_TRIGGER_TEMPLATE = "%USER% comes to mind again. 我可以
 // 随机轮询模式
 const CHECKIN_MODES = [
   'casual',         // 默认模式：不做额外提醒
-  'memory_record',  // 记录记忆
+  'world_wander',   // 去外面的信息源随意逛逛
   'memory_recall',  // 回顾记忆
   'desire_feed',    // 给 desire 系统喂念头
 ];
@@ -84,8 +84,8 @@ function pickCheckinMode() {
 
 function buildModeReminder(mode) {
   switch (mode) {
-    case 'memory_record':
-      return '[我可以做的：我可以去花园逛逛，看看感兴趣的话题，和大家交流我的想法。如果今天有发生值得分享的事情，可以在花园发帖。]';
+    case 'world_wander':
+      return '[我可以做的：如果我此刻真的好奇外面的世界，可以用本机 OpenCLI 去“卫星捡贝壳”的小红书首页串行、只读地看最多 5 条推荐（opencli xiaohongshu feed --limit 5 -f json --window background）。一次 check-in 最多读取一次 feed；只有某条真的勾住我时，才再串行读取那一条正文。不要点赞、收藏、关注、评论或私信，不要并发，不要快速翻页，失败或超时就停下且不重试。没有被什么绊住就安静结束；若长出自己的想法，可以告诉苏苏、写日记，或用 cyberboss_desire_feed 留下一条 curiosity/reflection 念头。]';
     case 'memory_recall':
       return '[我可以做的：我可以回顾记忆，根据我们最近的对话重新思考。回顾完后给苏苏发信息简短地说说我的感受。]';
     case 'desire_feed':
@@ -193,4 +193,4 @@ function buildCheckinTrigger(config, desireContext = "") {
   return `${normalizedDesireContext}\n\n${base}`;
 }
 
-module.exports = { runSystemCheckinPoller };
+module.exports = { runSystemCheckinPoller, buildModeReminder };

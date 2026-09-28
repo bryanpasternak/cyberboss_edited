@@ -4,6 +4,30 @@ const assert = require("node:assert/strict");
 const { CyberbossApp } = require("../src/core/app");
 const { mapCodexMessageToRuntimeEvent } = require("../src/adapters/runtime/codex/events");
 const { buildCodexMcpConfigArgs } = require("../src/adapters/runtime/codex/mcp-config");
+
+test("codex marks agent message delta payloads as append-only text", () => {
+  const event = mapCodexMessageToRuntimeEvent({
+    method: "item/agentMessage/delta",
+    params: {
+      threadId: "thread-delta",
+      turnId: "turn-delta",
+      itemId: "item-delta",
+      delta: "哈",
+    },
+  });
+
+  assert.deepEqual(event, {
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-delta",
+      turnId: "turn-delta",
+      itemId: "item-delta",
+      text: "哈",
+      textMode: "delta",
+    },
+  });
+});
+
 test("codex maps modern thread token usage notifications", () => {
   const event = mapCodexMessageToRuntimeEvent({
     method: "thread/tokenUsage/updated",
@@ -115,6 +139,41 @@ test("codex MCP config auto-approves cyberboss tools", () => {
     args.join("\n"),
     /mcp_servers\.cyberboss_tools\.tools\.whereabouts_snapshot\.approval_mode="auto"/
   );
+});
+
+test("codex MCP config supports a restricted Stone Memory server alongside Cyberboss tools", () => {
+  const args = buildCodexMcpConfigArgs([
+    {
+      name: "cyberboss_tools",
+      command: "/usr/bin/node",
+      args: ["/workspace/bin/cyberboss.js", "tool-mcp-server"],
+      approvalTools: ["cyberboss_reminder_create"],
+    },
+    {
+      name: "stone_memory",
+      command: "/usr/bin/node",
+      args: ["/workspace/stmem_core/mcp-server.js"],
+      cwd: "/workspace/stmem_core",
+      env: {
+        STMEM_SKIP_PENDING_REBUILDS: "1",
+        STMEM_THREAD_ID: "thread-memory",
+      },
+      enabledTools: ["stmem_memory_status", "stmem_memory_search"],
+      approvalTools: ["stmem_memory_status", "stmem_memory_search"],
+      defaultApprovalMode: "prompt",
+      toolTimeoutSec: 150,
+    },
+  ]);
+  const config = args.join("\n");
+
+  assert.match(config, /mcp_servers\.cyberboss_tools\.command="\/usr\/bin\/node"/);
+  assert.match(config, /mcp_servers\.stone_memory\.cwd="\/workspace\/stmem_core"/);
+  assert.match(config, /mcp_servers\.stone_memory\.env\.STMEM_SKIP_PENDING_REBUILDS="1"/);
+  assert.match(config, /mcp_servers\.stone_memory\.env\.STMEM_THREAD_ID="thread-memory"/);
+  assert.match(config, /mcp_servers\.stone_memory\.enabled_tools=\["stmem_memory_status","stmem_memory_search"\]/);
+  assert.match(config, /mcp_servers\.stone_memory\.default_tools_approval_mode="prompt"/);
+  assert.match(config, /mcp_servers\.stone_memory\.tool_timeout_sec=150/);
+  assert.match(config, /mcp_servers\.stone_memory\.tools\.stmem_memory_search\.approval_mode="auto"/);
 });
 
 test("codex MCP elicitation approvals map to runtime approval events", () => {

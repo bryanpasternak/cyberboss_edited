@@ -1,15 +1,17 @@
 const { sanitizeProtocolLeakText } = require("../adapters/runtime/codex/protocol-leak-monitor");
+const { IncrementalReplyBuffer, appendStreamingText } = require("./incremental-reply-buffer");
 
 const CURRENT_REPLY_HEADER = "===== 本轮模型回复 =====";
 
 class StreamDelivery {
-  constructor({ channelAdapter, channelRouter = null, sessionStore, runtimeId = "", onDeferredSystemReply, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
+  constructor({ channelAdapter, channelRouter = null, sessionStore, runtimeId = "", onDeferredSystemReply, onDeliveryFailure, systemReplyRetryScheduleMs, sameTokenRetryDelayMs }) {
     this.channelAdapter = channelAdapter;
     this.channelRouter = channelRouter;
     this.sessionStore = sessionStore;
     this.runtimeId = normalizeRuntimeId(runtimeId);
     this.systemReplyPolicy = createSystemReplyPolicy(this.runtimeId);
     this.onDeferredSystemReply = typeof onDeferredSystemReply === "function" ? onDeferredSystemReply : null;
+    this.onDeliveryFailure = typeof onDeliveryFailure === "function" ? onDeliveryFailure : null;
     this.systemReplyRetryScheduleMs = Array.isArray(systemReplyRetryScheduleMs) && systemReplyRetryScheduleMs.length
       ? systemReplyRetryScheduleMs.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value >= 0)
       : [1_500, 2_500, 4_000, 6_000];
@@ -145,11 +147,14 @@ class StreamDelivery {
       }
       case "runtime.reply.delta": {
         const state = this.ensureRunState(threadId, turnId);
+        const itemId = normalizeText(event.payload.itemId) || `item-${state.itemOrder.length + 1}`;
         this.upsertItem(state, {
-          itemId: normalizeText(event.payload.itemId) || `item-${state.itemOrder.length + 1}`,
+          itemId,
           text: normalizeLineEndings(event.payload.text),
           completed: false,
+          textMode: normalizeText(event.payload.textMode),
         });
+        await this.flushIncrementalReplyItem(state, itemId);
         return;
       }
       case "runtime.thinking.delta": {
@@ -210,6 +215,7 @@ class StreamDelivery {
       itemOrder: [],
       items: new Map(),
       sentItemIds: new Set(),
+      deliveryFailureRecorded: false,
       sendChain: Promise.resolve(),
       flushPromise: null,
       sequence: this.runSequence += 1,
@@ -273,9 +279,9 @@ class StreamDelivery {
     });
   }
 
-  upsertItem(state, { itemId, text, completed, kind = "" }) {
+  upsertItem(state, { itemId, text, completed, kind = "", textMode = "" }) {
     if (!text) {
-      return;
+      return null;
     }
     if (!state.items.has(itemId)) {
       state.itemOrder.push(itemId);
@@ -292,13 +298,82 @@ class StreamDelivery {
       current.kind = kind;
     }
     if (completed) {
+      if (current.incrementalBuffer) {
+        const finalized = current.incrementalBuffer.finalize(text);
+        if (finalized.hadEarlyCommit) {
+          current.incrementalDeliveryText = finalized.text;
+          current.incrementalMismatch = finalized.mismatch;
+          if (finalized.mismatch) {
+            console.warn(
+              `[stream-delivery] final mismatch thread=${state.threadId} item=${itemId} committedChars=${finalized.committedRawLength}`
+            );
+          }
+        }
+      }
       current.currentText = text;
       current.completedText = text;
       current.completed = true;
+      return current;
+    }
+
+    current.currentText = textMode === "delta"
+      ? `${current.currentText}${text}`
+      : appendStreamingText(current.currentText, text);
+    return current;
+  }
+
+  ensureIncrementalReplyBuffer(state, item) {
+    if (!item || item.kind || item.completed || item.incrementalSuspended) return null;
+    const capabilities = this.resolveCapabilitiesForTarget(state.replyTarget);
+    const config = capabilities?.incrementalTextDelivery;
+    if (!config?.enabled || config.mode !== "sealed_chunks") return null;
+    if (!item.incrementalBuffer) {
+      item.incrementalBuffer = new IncrementalReplyBuffer({
+        targetBytes: config.targetBytes,
+        hardMaxBytes: config.hardMaxBytes,
+        carryBytes: config.carryBytes,
+      });
+    }
+    item.incrementalBuffer.append(item.currentText);
+    return item.incrementalBuffer;
+  }
+
+  async flushIncrementalReplyItem(state, itemId) {
+    if (!state.replyTarget || state.replyTarget.provider === "system") return;
+    const item = state.items.get(itemId);
+    const buffer = this.ensureIncrementalReplyBuffer(state, item);
+    if (!buffer) return;
+    const chunk = buffer.peekReadyChunk();
+    if (!chunk) return;
+
+    const deliveryText = sanitizeReplyText(markdownToPlainText(chunk.rawText));
+    if (!deliveryText) {
+      buffer.commit(chunk.token);
       return;
     }
 
-    current.currentText = appendStreamingText(current.currentText, text);
+    const prependDeferredPrefix = Boolean(state.deferredReplyPrefix);
+    console.log(
+      `[stream-delivery] chunk ready thread=${state.threadId} turn=${state.turnId} item=${itemId} seq=${chunk.sequence} bytes=${chunk.byteLength}`
+    );
+    try {
+      await this.sendReplyDelivery(state, {
+        itemId,
+        kind: "plain",
+        text: deliveryText,
+      }, { prependDeferredPrefix });
+      buffer.commit(chunk.token);
+      if (prependDeferredPrefix) state.deferredReplyPrefix = "";
+      console.log(
+        `[stream-delivery] chunk committed thread=${state.threadId} turn=${state.turnId} item=${itemId} seq=${chunk.sequence} bytes=${chunk.byteLength}`
+      );
+    } catch (error) {
+      buffer.reject(chunk.token);
+      item.incrementalSuspended = true;
+      console.warn(
+        `[stream-delivery] incremental delivery suspended thread=${state.threadId} turn=${state.turnId} item=${itemId}: ${error.message}`
+      );
+    }
   }
 
   setItemText(state, itemId, text, completed) {
@@ -338,7 +413,7 @@ class StreamDelivery {
   }
 
   async flushNow(state, { force }) {
-    if (!state.replyTarget) {
+    if (!state.replyTarget || state.deliveryFailureRecorded) {
       return;
     }
 
@@ -352,9 +427,11 @@ class StreamDelivery {
       return;
     }
 
+    let failedDelivery = pendingDeliveries[0];
     state.sendChain = state.sendChain.then(async () => {
       for (let index = 0; index < pendingDeliveries.length; index += 1) {
         const delivery = pendingDeliveries[index];
+        failedDelivery = delivery;
         await this.sendReplyDelivery(state, delivery, {
           prependDeferredPrefix: index === 0 && Boolean(state.deferredReplyPrefix),
         });
@@ -363,10 +440,19 @@ class StreamDelivery {
           state.deferredReplyPrefix = "";
         }
       }
-    }).catch((error) => {
-      const failedDelivery = pendingDeliveries[0];
+    }).catch(async (error) => {
       const failedText = buildDeliveryPreviewText(failedDelivery);
-      void this.deferSystemReply(state, buildEffectiveReplyText(state.deferredReplyPrefix, failedText), error, "plain_reply");
+      const effectiveText = buildEffectiveReplyText(state.deferredReplyPrefix, failedText);
+      const deferred = await this.deferSystemReply(state, effectiveText, error, "plain_reply");
+      if (!deferred) {
+        state.deliveryFailureRecorded = await this.reportDeliveryFailure(
+          state,
+          failedDelivery,
+          effectiveText,
+          error,
+          "plain_reply",
+        );
+      }
       console.error(`[cyberboss] failed to deliver reply thread=${state.threadId}: ${error.message}`);
     });
 
@@ -547,6 +633,41 @@ class StreamDelivery {
     }
   }
 
+  async reportDeliveryFailure(state, delivery, text, error, kind = "plain_reply") {
+    if (typeof this.onDeliveryFailure !== "function") {
+      return false;
+    }
+    const target = state?.replyTarget || {};
+    const channelId = normalizeText(target.channelId || target.provider).toLowerCase();
+    if (!channelId || !target.userId || !text) {
+      return false;
+    }
+    try {
+      const recorded = await this.onDeliveryFailure({
+        channelId,
+        provider: normalizeText(target.provider),
+        userId: target.userId,
+        contextToken: normalizeText(target.contextToken),
+        threadId: state.threadId,
+        turnId: state.turnId,
+        itemId: normalizeText(delivery?.itemId),
+        text,
+        error,
+        kind,
+      });
+      if (!recorded) {
+        return false;
+      }
+      console.warn(
+        `[cyberboss] recorded delivery failure channel=${channelId} thread=${state.threadId} user=${target.userId}`
+      );
+      return true;
+    } catch (recordError) {
+      console.error(`[cyberboss] failed to record delivery failure thread=${state.threadId}: ${recordError.message}`);
+      return false;
+    }
+  }
+
   resolveRetriableReplyTarget(currentTarget, error) {
     if (!isSystemReplyContextFailure(error)) {
       return null;
@@ -701,11 +822,20 @@ function resolvePlainReplySourceText(item, force) {
   if (!item || typeof item !== "object") {
     return "";
   }
+  if (Object.prototype.hasOwnProperty.call(item, "incrementalDeliveryText")) {
+    return trimOuterBlankLines(item.incrementalDeliveryText);
+  }
   if (item.completed) {
     return trimOuterBlankLines(item.completedText || item.currentText || "");
   }
   if (!force) {
     return "";
+  }
+  if (item.incrementalBuffer?.hadEarlyCommit) {
+    const finalized = item.incrementalBuffer.finalize(item.currentText || "");
+    item.incrementalDeliveryText = finalized.text;
+    item.incrementalMismatch = finalized.mismatch;
+    return trimOuterBlankLines(finalized.text);
   }
   return trimOuterBlankLines(item.currentText || "");
 }
@@ -744,32 +874,6 @@ function markdownToPlainText(text) {
   );
   result = result.replace(/\n{3,}/g, "\n\n");
   return trimOuterBlankLines(result);
-}
-
-function appendStreamingText(current, next) {
-  const base = String(current || "");
-  const incoming = String(next || "");
-  if (!incoming) {
-    return base;
-  }
-  if (!base) {
-    return incoming;
-  }
-  if (base.endsWith(incoming)) {
-    return base;
-  }
-  if (incoming.startsWith(base)) {
-    return incoming;
-  }
-
-  const maxOverlap = Math.min(base.length, incoming.length);
-  for (let size = maxOverlap; size > 0; size -= 1) {
-    if (base.slice(-size) === incoming.slice(0, size)) {
-      return `${base}${incoming.slice(size)}`;
-    }
-  }
-
-  return `${base}${incoming}`;
 }
 
 function indentBlock(text) {

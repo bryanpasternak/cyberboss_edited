@@ -76,6 +76,36 @@ function listProjectToolNames() {
 
 const PROJECT_TOOLS = [
   {
+    name: "cyberboss_xhs_read",
+    description: "Read one Xiaohongshu (小红书/XHS) share link, including note text, downloaded images, and ordered video storyboard frames when ffmpeg is available. Call this when the user shares an xhslink.com or xiaohongshu.com note. After it returns, use Read/view_image on every data.images and data.videoFrames absolutePath in index order before describing visual content. Frames do not include audio.",
+    shortHint: "Read an XHS note and prepare its images or video frames for viewing.",
+    topics: ["xhs", "xiaohongshu", "image", "video"],
+    inputSchema: {
+      type: "object",
+      required: ["url"],
+      properties: {
+        url: { type: "string", description: "Xiaohongshu share URL from xhslink.com or xiaohongshu.com." },
+        refresh: { type: "boolean", description: "Ignore a valid six-hour cache entry and fetch again." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const service = requireXhsReaderService(services);
+      const result = await service.read(args);
+      const imageCount = Array.isArray(result.images) ? result.images.length : 0;
+      const frameCount = Array.isArray(result.videoFrames) ? result.videoFrames.length : 0;
+      const visualInstruction = frameCount
+        ? `Read all ${frameCount} video frame paths in index order; they are a silent storyboard.`
+        : imageCount
+          ? `Read all ${imageCount} image paths in index order.`
+          : "No local visual files were produced; use the note text and videoProcessing status.";
+      return {
+        text: `XHS note loaded: ${result.note?.title || result.note?.id || "untitled"}. ${visualInstruction}`,
+        data: result,
+      };
+    },
+  },
+  {
     name: "cyberboss_memory2_search",
     description: "Search the new chat-log memory layer. This is separate from Ombre-Brain tools such as grow, breath, and hold.",
     shortHint: "Search the new chat-log memory layer.",
@@ -231,9 +261,62 @@ const PROJECT_TOOLS = [
     },
   },
   {
+    name: "cyberboss_postcard_prepare",
+    description: "Default first step for a new illustrated postcard. Save its text as a draft and return an artRequest for the current agent to send to its image-generation tool. Do not send the postcard yet; after image generation, call cyberboss_postcard_finalize with the generated local image path.",
+    shortHint: "Prepare an illustrated postcard draft and request art.",
+    topics: ["memento", "postcard", "image"],
+    inputSchema: {
+      type: "object",
+      required: ["message", "visualBrief"],
+      properties: {
+        message: { type: "string", description: "The private letter text. It is not copied into the image prompt." },
+        visualBrief: { type: "string", description: "A concise non-text visual concept for image generation; do not repeat the private letter." },
+        layout: { type: "string", description: "Optional: auto, one_line, short_note, or long_letter. The service upgrades layouts that cannot fit." },
+        theme: { type: "string", description: "Optional visual-series theme; defaults to orbit-paper." },
+        from: { type: "string" },
+        to: { type: "string" },
+        date: { type: "string" },
+        frontTitle: { type: "string" },
+        frontCaption: { type: "string" },
+        stamp: { type: "string" },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const item = await services.postcard.prepare({ createdBy: "moonlet", givenTo: "susu", ...args });
+      if (item.status === "awaiting_art") {
+        return {
+          text: `Postcard draft prepared: ${item.id}. Call the current session's image-generation tool with data.artRequest.prompt. Then call cyberboss_postcard_finalize with id=${item.id} and the generated absolute local file path. Do not send the draft yet.`,
+          data: item,
+        };
+      }
+      return { text: `Postcard rendered: ${item.id}. Send displayAsset.filePath and offer callback ${item.callbackData}.`, data: item };
+    },
+  },
+  {
+    name: "cyberboss_postcard_finalize",
+    description: "Finish an illustrated postcard draft after the current agent generated its artwork. Import the local image safely, render the HTML front and back to persistent PNG assets, and return the front for delivery. Set useFallback only when image generation is unavailable or intentionally skipped.",
+    shortHint: "Attach generated art and render the postcard.",
+    topics: ["memento", "postcard", "image"],
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string" },
+        sourceImagePath: { type: "string", description: "Absolute local path returned by the image-generation tool." },
+        useFallback: { type: "boolean", description: "Render with built-in art when no generated image is available." },
+      },
+      additionalProperties: false,
+    },
+    async handler({ services, args }) {
+      const item = await services.postcard.finalize(args);
+      return { text: `Postcard finalized: ${item.id}. Send displayAsset.filePath and offer callback ${item.callbackData}.`, data: item };
+    },
+  },
+  {
     name: "cyberboss_postcard_send",
-    description: "Create and save a two-sided postcard with a front image, addressed back, date, stamp, and short message.",
-    shortHint: "Send a two-sided postcard.",
+    description: "Create the legacy SVG postcard without generated art. Prefer cyberboss_postcard_prepare for new illustrated postcards; use this only when a simple no-generation fallback is explicitly wanted.",
+    shortHint: "Send a legacy postcard without generated art.",
     topics: ["memento", "postcard"],
     inputSchema: {
       type: "object",
@@ -399,7 +482,7 @@ const PROJECT_TOOLS = [
   },
   {
     name: "cyberboss_desire_thought_resolve",
-    description: "Resolve one desire thought only after the corresponding real action. Use messaged after actually telling 苏苏; initiated after directly going to抱她、亲她、摸她、撩拨她或发起水煎/做爱; journaled after writing the erotic diary; faded when it genuinely passed; or sex when completed sex carried it through. shared remains a legacy alias.",
+    description: "Resolve one desire thought only after the corresponding real action. Use explored after actually following a thought through reading, browsing, or reflection; messaged after actually telling 苏苏; initiated after directly going to抱她、亲她、摸她、撩拨她或发起水煎/做爱; journaled after writing it in a diary; faded when it genuinely passed; or sex when completed sex carried it through. shared remains a legacy alias.",
     shortHint: "Resolve a desire thought after a real outcome.",
     topics: ["desire"],
     inputSchema: {
@@ -407,7 +490,7 @@ const PROJECT_TOOLS = [
       required: ["thoughtId", "resolution"],
       properties: {
         thoughtId: { type: "string", description: "Stable thought id from desire state or feed output." },
-        resolution: { type: "string", description: "messaged, initiated, journaled, faded, sex, or legacy shared." },
+        resolution: { type: "string", description: "explored, messaged, initiated, journaled, faded, sex, or legacy shared." },
       },
       additionalProperties: false,
     },
@@ -927,6 +1010,13 @@ function requireChatMemoryService(services = {}) {
     throw new Error("Chat memory service is not initialized.");
   }
   return services.chatMemory;
+}
+
+function requireXhsReaderService(services = {}) {
+  if (!services.xhs) {
+    throw new Error("XHS reader service is not initialized.");
+  }
+  return services.xhs;
 }
 
 function normalizeText(value) {

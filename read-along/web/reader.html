@@ -61,7 +61,7 @@ html, body { height: 100%; background: var(--bg); font-family: -apple-system, "P
 .empty-tip { text-align: center; color: var(--faint); font-size: 13px; padding: 30px 0; }
 
 /* ── 阅读器 ── */
-.reader { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; z-index: 30; }
+.reader { position: fixed; inset: 0; background: var(--bg); display: none; flex-direction: column; z-index: 30; container-type: inline-size; }
 .reader.open { display: flex; }
 .reader-top { display: flex; align-items: center; padding: max(10px, env(safe-area-inset-top)) 14px 8px; font-size: 14px; color: var(--muted); }
 .r-back { font-size: 24px; padding: 0 10px 0 2px; }
@@ -76,8 +76,31 @@ html, body { height: 100%; background: var(--bg); font-family: -apple-system, "P
 .anno-confirm .ok { color: var(--accent); }
 .reader-viewport { flex: 1; overflow: hidden; padding: 8px 22px; position: relative; }
 .reader-flow { height: 100%; column-gap: 44px; column-fill: auto; font-size: 17px; line-height: 1.9; text-align: justify; }
+@container (max-width: 520px) {
+  .reader-viewport { padding-inline: 16px; }
+  .reader-flow { text-align: left; column-gap: 32px; }
+}
 .reader-flow p { margin-bottom: 0.9em; text-indent: 2em; }
 .reader-flow p.is-title { text-indent: 0; font-weight: 700; font-size: 1.12em; }
+.reader-flow p.paper-rich { text-indent: 0; text-align: left; break-inside: avoid; overflow-x: auto; padding: .25em .1em; }
+.paper-rich math { max-width: 100%; overflow-x: auto; overflow-y: hidden; font-family: "Cambria Math", "STIX Two Math", "Times New Roman", serif; }
+.paper-rich table { border-collapse: collapse; min-width: 100%; font-size: .88em; }
+.paper-rich th, .paper-rich td { border: 1px solid var(--border); padding: .35em .5em; vertical-align: top; }
+.paper-rich pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--card); border-radius: 8px; padding: .7em; }
+.paper-rich img { display: block; max-width: 100%; max-height: 58vh; object-fit: contain; margin: .5em auto; }
+.paper-rich .paper-block { display: block; }
+.paper-rich .paper-block.block-human { box-shadow: inset 3px 0 var(--human); padding-left: .55em; }
+.paper-rich .paper-block.block-ai { box-shadow: inset 3px 0 var(--ai); padding-left: .55em; }
+.paper-rich .paper-block.block-preview { background: rgba(240, 180, 41, .16); border-radius: 6px; }
+.pdf-page-card { display: flex; gap: .7em; align-items: center; border: 1px solid var(--border-soft); border-radius: 9px; padding: .5em; background: var(--card); }
+.pdf-page-card img { width: 58px; height: 78px; object-fit: cover; margin: 0; border: 1px solid var(--border-soft); border-radius: 4px; }
+.pdf-page-card span { color: var(--ai); font-size: .86em; }
+.paper-viewer { position: fixed; inset: 0; z-index: 80; display: none; flex-direction: column; background: rgba(12,12,14,.96); }
+.paper-viewer.open { display: flex; }
+.paper-viewer-top { color: #eee; padding: max(12px, env(safe-area-inset-top)) 16px 10px; display: flex; justify-content: space-between; font-size: 14px; }
+.paper-viewer-body { flex: 1; overflow: auto; display: flex; align-items: flex-start; justify-content: center; padding: 8px; }
+.paper-viewer canvas { max-width: 100%; height: auto; background: white; box-shadow: 0 2px 14px rgba(0,0,0,.35); }
+.paper-viewer canvas.zoomed { max-width: none; width: 180vw; }
 .reader-foot { text-align: center; font-size: 12px; color: var(--faint); padding: 6px 0 max(10px, env(safe-area-inset-bottom)); }
 .seg { border-radius: 2px; }
 .hl-human { background: rgba(233, 96, 155, .16); box-shadow: inset 0 -2px rgba(233, 96, 155, .55); }
@@ -151,7 +174,7 @@ html, body { height: 100%; background: var(--bg); font-family: -apple-system, "P
 <div class="shelf" id="shelf">
   <h1>书架 <span class="imp-btn" id="imp-btn">＋ 导入</span></h1>
   <div id="shelf-grid"><div class="empty-tip">加载中…</div></div>
-  <input type="file" id="imp-file" accept=".epub,.txt" style="display:none">
+  <input type="file" id="imp-file" accept=".epub,.txt,.tex,.pdf" style="display:none">
 </div>
 
 <div class="overlay" id="overlay-book">
@@ -249,6 +272,11 @@ html, body { height: 100%; background: var(--bg); font-family: -apple-system, "P
 
 <div class="toast" id="toast"></div>
 
+<div class="paper-viewer" id="paper-viewer">
+  <div class="paper-viewer-top"><span id="paper-viewer-title">论文原页</span><span id="paper-viewer-close">关闭</span></div>
+  <div class="paper-viewer-body"><canvas id="paper-viewer-canvas" aria-label="论文原始页面"></canvas></div>
+</div>
+
 <script>
 const API = '/api';
 const reader = document.getElementById('reader');
@@ -332,6 +360,46 @@ function coverUrl(book) {
 
 function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function paragraphText(value) {
+  return typeof value === 'string' ? value : String(value && value.text || '');
+}
+
+function assetUrl(name) {
+  return `${API}/asset/${encodeURIComponent(R.book.bookId)}/${encodeURIComponent(name)}`;
+}
+
+function sanitizeRichHtml(html) {
+  const source = new DOMParser().parseFromString(`<div>${String(html || '')}</div>`, 'text/html').body.firstElementChild;
+  const target = document.createElement('div');
+  const htmlTags = new Set(['P','SPAN','EM','STRONG','B','I','SUB','SUP','CODE','PRE','BLOCKQUOTE','UL','OL','LI','H1','H2','H3','H4','H5','H6','DIV','FIGURE','FIGCAPTION','IMG','TABLE','THEAD','TBODY','TFOOT','TR','TH','TD','BR','HR']);
+  const copy = (node, parent) => {
+    if (node.nodeType === Node.TEXT_NODE) { parent.appendChild(document.createTextNode(node.textContent)); return; }
+    if (node.nodeType !== Node.ELEMENT_NODE) return;
+    const isMath = node.namespaceURI === 'http://www.w3.org/1998/Math/MathML';
+    if (!isMath && !htmlTags.has(node.tagName)) {
+      node.childNodes.forEach((child) => copy(child, parent));
+      return;
+    }
+    const el = isMath
+      ? document.createElementNS('http://www.w3.org/1998/Math/MathML', node.localName)
+      : document.createElement(node.tagName.toLowerCase());
+    const safeAttrs = isMath
+      ? new Set(['display','mathvariant','mathsize','stretchy','form','fence','separator','accent','accentunder','linethickness','rowspan','columnspan','columnalign','rowalign','scriptlevel','displaystyle','encoding'])
+      : new Set(['alt','title','colspan','rowspan','scope']);
+    for (const attr of node.attributes) {
+      const name = attr.name.toLowerCase();
+      if (safeAttrs.has(name)) el.setAttribute(name, attr.value);
+      if (!isMath && node.tagName === 'IMG' && name === 'src' && /^data:image\/(?:png|jpe?g|gif|webp);base64,/i.test(attr.value)) {
+        el.setAttribute('src', attr.value);
+      }
+    }
+    node.childNodes.forEach((child) => copy(child, el));
+    parent.appendChild(el);
+  };
+  source.childNodes.forEach((node) => copy(node, target));
+  return target.innerHTML;
 }
 
 function fmtDur(ms) {
@@ -552,6 +620,7 @@ async function showChapter(chIdx, seq) {
   R.ch = chIdx;
   rTitle.textContent = `${R.book.title} · ${ch.title}`;
   renderChapterHtml(ch);
+  await waitForChapterMedia();
   paginate();
   let page = 0;
   if (Number.isInteger(seq)) {
@@ -559,6 +628,16 @@ async function showChapter(chIdx, seq) {
     page = R.paraPages[paraIdx] ? R.paraPages[paraIdx].start : 0;
   }
   gotoPage(page, { silentIfSame: false });
+}
+
+function waitForChapterMedia() {
+  return Promise.all([...rFlow.querySelectorAll('img')].map((img) => {
+    if (img.complete) return undefined;
+    return new Promise((resolve) => {
+      img.addEventListener('load', resolve, { once: true });
+      img.addEventListener('error', resolve, { once: true });
+    });
+  }));
 }
 
 function renderChapterHtml(ch) {
@@ -569,10 +648,42 @@ function renderChapterHtml(ch) {
       (annosByPara[paraIdx] = annosByPara[paraIdx] || []).push(a);
     }
   }
-  rFlow.innerHTML = ch.paragraphs.map((text, i) => {
-    const cls = i === 0 && text === ch.title ? ' class="is-title"' : '';
-    return `<p data-i="${i}"${cls}>${renderParaHtml(text, annosByPara[i] || [])}</p>`;
+  rFlow.innerHTML = ch.paragraphs.map((value, i) => {
+    const text = paragraphText(value);
+    const rich = value && typeof value === 'object' && value.kind !== 'text';
+    const classes = [];
+    if (i === 0 && text === ch.title) classes.push('is-title');
+    if (rich) classes.push('paper-rich');
+    const cls = classes.length ? ` class="${classes.join(' ')}"` : '';
+    return `<p data-i="${i}"${rich ? ' data-rich="1"' : ''}${cls}>${renderParagraph(value, annosByPara[i] || [])}</p>`;
   }).join('');
+}
+
+function renderParagraph(value, annos) {
+  const text = paragraphText(value);
+  if (!value || typeof value !== 'object' || value.kind === 'text') return renderParaHtml(text, annos);
+  const classes = [];
+  if (annos.some((a) => a.createdBy === 'human')) classes.push('block-human');
+  if (annos.some((a) => a.createdBy === 'ai')) classes.push('block-ai');
+  if (annos.some((a) => a.createdBy === 'preview')) classes.push('block-preview');
+  let body = '';
+  if (value.kind === 'pdf-page' && value.asset) {
+    body = `<span class="pdf-page-card" data-page-asset="${esc(value.asset)}" data-page-number="${Number(value.page) || 1}" data-page-label="PDF 第 ${Number(value.page) || ''} 页"><span>▧ PDF 第 ${Number(value.page) || ''} 页 · 点开查看原始排版</span></span>`;
+  } else {
+    body = sanitizeRichHtml(value.html || '') || esc(text);
+  }
+  if (Array.isArray(value.media)) {
+    for (const media of value.media) {
+      if (/^image\//.test(media.mediaType || '')) {
+        body += `<img src="${esc(assetUrl(media.asset))}" alt="${esc(media.label || '论文插图')}">`;
+      } else if (media.mediaType === 'application/pdf') {
+        body += `<span class="pdf-page-card" data-page-asset="${esc(media.asset)}" data-page-number="1" data-page-label="${esc(media.label || 'PDF 插图')}"><span>▧ ${esc(media.label || 'PDF 插图')} · 点开查看</span></span>`;
+      }
+    }
+  }
+  const bubbles = annos.filter((a) => a.id !== 'preview')
+    .map((a) => `<span class="bub by-${a.createdBy}" data-id="${a.id}"></span>`).join('');
+  return `<span class="paper-block ${classes.join(' ')}">${body}${bubbles}</span>`;
 }
 
 function renderParaHtml(text, annos) {
@@ -605,8 +716,10 @@ function renderParaHtml(text, annos) {
 }
 
 function paginate() {
-  const w = rViewport.clientWidth - 44; /* padding 22*2 */
-  const gap = 44;
+  const viewportStyle = getComputedStyle(rViewport);
+  const flowStyle = getComputedStyle(rFlow);
+  const w = rViewport.clientWidth - parseFloat(viewportStyle.paddingLeft) - parseFloat(viewportStyle.paddingRight);
+  const gap = parseFloat(flowStyle.columnGap) || 0;
   R.step = w + gap;
   rFlow.style.transform = 'none';
   rFlow.style.columnWidth = w + 'px';
@@ -778,6 +891,12 @@ reader.addEventListener('click', async (e) => {
   // 工具条展开期间：点任意处只收起，不翻页不选中
   if (reader.classList.contains('bar-open')) { closeBar(); return; }
 
+  const pageAsset = e.target.closest('[data-page-asset]');
+  if (pageAsset && !reader.classList.contains('annotating')) {
+    openPaperViewer(pageAsset.dataset.pageAsset, pageAsset.dataset.pageLabel, Number(pageAsset.dataset.pageNumber) || 1);
+    return;
+  }
+
   const bub = e.target.closest('.bub');
   if (bub) {
     const anno = R.annos.find((a) => a.id === bub.dataset.id);
@@ -786,6 +905,8 @@ reader.addEventListener('click', async (e) => {
   }
 
   if (reader.classList.contains('annotating')) {
+    const rich = e.target.closest('p[data-rich="1"]');
+    if (rich) { handleRichAnnoTap(rich); return; }
     handleAnnoTap(e.clientX, e.clientY);
     return;
   }
@@ -802,6 +923,57 @@ reader.addEventListener('click', async (e) => {
   else if (x > 0.67) turnPage(1);
   else openBar();
 });
+
+let pdfJsPromise = null;
+const pdfDocuments = new Map();
+
+async function openPaperViewer(asset, label, pageNumber) {
+  const viewer = document.getElementById('paper-viewer');
+  document.getElementById('paper-viewer-title').textContent = label || '论文原页';
+  viewer.classList.add('open');
+  const canvas = document.getElementById('paper-viewer-canvas');
+  canvas.classList.remove('zoomed');
+  try {
+    if (!pdfJsPromise) {
+      pdfJsPromise = import(`${API}/vendor/pdf.min.mjs`).then((pdfjs) => {
+        pdfjs.GlobalWorkerOptions.workerSrc = `${API}/vendor/pdf.worker.min.mjs`;
+        return pdfjs;
+      });
+    }
+    const pdfjs = await pdfJsPromise;
+    const key = assetUrl(asset);
+    if (!pdfDocuments.has(key)) pdfDocuments.set(key, pdfjs.getDocument({ url: key }).promise);
+    const pdf = await pdfDocuments.get(key);
+    const page = await pdf.getPage(Math.max(1, Math.min(pdf.numPages, pageNumber)));
+    const base = page.getViewport({ scale: 1 });
+    const body = viewer.querySelector('.paper-viewer-body');
+    const cssScale = Math.max(0.25, (body.clientWidth - 16) / base.width);
+    const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+    const viewport = page.getViewport({ scale: cssScale * pixelRatio });
+    canvas.width = Math.ceil(viewport.width);
+    canvas.height = Math.ceil(viewport.height);
+    canvas.style.width = `${Math.ceil(viewport.width / pixelRatio)}px`;
+    canvas.style.height = `${Math.ceil(viewport.height / pixelRatio)}px`;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+  } catch (error) {
+    closePaperViewer();
+    toast('原页打开失败：' + error.message);
+  }
+}
+
+function closePaperViewer() {
+  const viewer = document.getElementById('paper-viewer');
+  viewer.classList.remove('open');
+  const canvas = document.getElementById('paper-viewer-canvas');
+  canvas.width = 1;
+  canvas.height = 1;
+}
+
+document.getElementById('paper-viewer-close').addEventListener('click', closePaperViewer);
+document.getElementById('paper-viewer').addEventListener('click', (e) => {
+  if (e.target.id === 'paper-viewer' || e.target.classList.contains('paper-viewer-body')) closePaperViewer();
+});
+document.getElementById('paper-viewer-canvas').addEventListener('click', (e) => e.target.classList.toggle('zoomed'));
 
 /* ── 两点点选划线 ── */
 
@@ -831,7 +1003,7 @@ function repaintPara(paraIdx, extraAnno) {
   if (!p || !ch) return;
   const annos = R.annos.filter((a) => a.seq - ch.baseSeq === paraIdx);
   if (extraAnno) annos.push(extraAnno);
-  p.innerHTML = renderParaHtml(ch.paragraphs[paraIdx], annos);
+  p.innerHTML = renderParagraph(ch.paragraphs[paraIdx], annos);
 }
 
 function caretFromPoint(x, y) {
@@ -862,8 +1034,8 @@ function handleAnnoTap(x, y) {
   const hit = caretFromPoint(x, y);
   if (!hit) return;
   const ch = R.chapters[R.ch];
-  const text = ch.paragraphs[hit.paraIdx];
-  if (typeof text !== 'string' || !text.length) return;
+  const text = paragraphText(ch.paragraphs[hit.paraIdx]);
+  if (!text.length) return;
   const off = Math.max(0, Math.min(text.length, hit.off));
 
   const startingOver = R.selStart === null || R.selEnd !== null || hit.paraIdx !== R.selStart.paraIdx;
@@ -887,13 +1059,26 @@ function handleAnnoTap(x, y) {
   repaintPara(hit.paraIdx, { id: 'preview', createdBy: 'preview', startOff: s, endOff: e, comments: [] });
 }
 
+function handleRichAnnoTap(paraEl) {
+  const paraIdx = Number(paraEl.dataset.i);
+  const text = paragraphText(R.chapters[R.ch].paragraphs[paraIdx]);
+  if (!text) return;
+  clearPreview();
+  R.selStart = { paraIdx, off: 0 };
+  R.selEnd = { paraIdx, off: text.length };
+  R.previewPara = paraIdx;
+  repaintPara(paraIdx, { id: 'preview', createdBy: 'preview', startOff: 0, endOff: text.length, comments: [] });
+  toast('已选中整块公式或图表，可以批注了');
+}
+
 function confirmSelection() {
   if (!R.selStart || !R.selEnd) { toast('先点起点和终点，划出想批注的文字'); return; }
   const ch = R.chapters[R.ch];
   const paraIdx = R.selStart.paraIdx;
   const s = R.selStart.off;
   const e = R.selEnd.off;
-  R.pendingSel = { chapter: R.ch, paraIdx, startOff: s, endOff: e, quote: ch.paragraphs[paraIdx].slice(s, e) };
+  const text = paragraphText(ch.paragraphs[paraIdx]);
+  R.pendingSel = { chapter: R.ch, paraIdx, startOff: s, endOff: e, quote: text.slice(s, e) };
   openSheet('create', null, {});
 }
 

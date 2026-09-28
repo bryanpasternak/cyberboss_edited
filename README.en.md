@@ -149,6 +149,9 @@ CYBERBOSS_CLAUDE_PERMISSION_MODE=default
 CYBERBOSS_CLAUDE_DISABLE_VERBOSE=false
 CYBERBOSS_CLAUDE_EXTRA_ARGS=
 CLAUDE_CODE_MAX_OUTPUT_TOKENS=
+CYBERBOSS_XHS_CACHE_DIR=
+CYBERBOSS_XHS_FFMPEG_PATH=ffmpeg
+CYBERBOSS_XHS_FFPROBE_PATH=ffprobe
 CYBERBOSS_ACCOUNT_ID=
 CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS=20
 CYBERBOSS_WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
@@ -193,10 +196,14 @@ What these do:
   Append extra Claude CLI arguments as a comma-separated list.
 - `CLAUDE_CODE_MAX_OUTPUT_TOKENS`
   Reserve output tokens for Claude replies. `/status` subtracts this reserve from the configured Claude context window.
+- `CYBERBOSS_XHS_CACHE_DIR`, `CYBERBOSS_XHS_FFMPEG_PATH`, `CYBERBOSS_XHS_FFPROBE_PATH`
+  Configure the Xiaohongshu reader cache and ffmpeg binaries. Without ffmpeg it still returns metadata, text, cover art, and image posts, but skips video frame extraction. See the [Xiaohongshu reader implementation plan](./docs/xhs-reader-implementation-plan-2026-08-31.md) for installation commands, limits, and acceptance steps.
 - `CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS`
   Set the default minimum merge size for short WeChat reply chunks.
 - `CYBERBOSS_TELEGRAM_MIN_CHUNK_CHARS`
   Set the default minimum merge size for short Telegram reply chunks.
+- `CYBERBOSS_TELEGRAM_STREAM_DELIVERY`, `CYBERBOSS_TELEGRAM_STREAM_FLUSH_BYTES`
+  Optionally enable sealed incremental delivery for long Telegram replies and set the target UTF-8 byte size. It is disabled by default; after a proxy delivery failure, the current item stops streaming early and falls back to the normal completion path.
 - `CYBERBOSS_WEIXIN_BASE_URL`, `CYBERBOSS_WEIXIN_CDN_BASE_URL`, `CYBERBOSS_WEIXIN_QR_BOT_TYPE`
   Override the WeChat bridge endpoints and QR bot type when your deployment needs it.
 - `CYBERBOSS_ENABLE_LOCATION_SERVER`
@@ -444,17 +451,20 @@ Agent-facing Cyberboss capabilities are project-native structured tools.
 - `cyberboss_sticker_delete`
 - `cyberboss_sticker_save_from_inbox`
 - `cyberboss_sticker_update`
+- `cyberboss_xhs_read`
 - `cyberboss_system_send`
 
 ### Agent conventions
 
 - Use Cyberboss project tools for diary, reminder, timeline, screenshot, and file-send operations
+- For a Xiaohongshu share URL, call `cyberboss_xhs_read` and inspect the returned local `images` and `videoFrames` in index order; extracted video frames contain no audio
 - Prefer documented lifecycle entrypoints from this README, `--help`, and [docs/commands.md](./docs/commands.md) for human terminal usage
 - On first failure, report the concrete error before reading source code
 
 ## Docs
 
 - [docs/commands.md](./docs/commands.md)
+- [Xiaohongshu reader implementation plan](./docs/xhs-reader-implementation-plan-2026-08-31.md)
 
 <a id="faq"></a>
 ## FAQ

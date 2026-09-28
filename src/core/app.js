@@ -36,6 +36,7 @@ const { ReplySelfReviewController, ReplySelfReviewStore } = require("./reply-sel
 const { ThreadStateStore } = require("./thread-state-store");
 const { AutoCompactService } = require("./auto-compact-service");
 const { DeferredSystemReplyStore } = require("./deferred-system-reply-store");
+const { DeliveryFailureStore } = require("./delivery-failure-store");
 const { SystemMessageQueueStore } = require("./system-message-queue-store");
 const { SystemMessageDispatcher } = require("./system-message-dispatcher");
 const { TimelineScreenshotQueueStore } = require("./timeline-screenshot-queue-store");
@@ -136,6 +137,7 @@ class CyberbossApp {
     this.threadStateStore = new ThreadStateStore();
     this.systemMessageQueue = new SystemMessageQueueStore({ filePath: config.systemMessageQueueFile });
     this.deferredSystemReplyQueue = new DeferredSystemReplyStore({ filePath: config.deferredSystemReplyQueueFile });
+    this.deliveryFailureQueue = new DeliveryFailureStore({ filePath: config.deliveryFailureQueueFile });
     this.checkinConfigStore = new CheckinConfigStore({ filePath: config.checkinConfigFile });
     this.timelineScreenshotQueue = new TimelineScreenshotQueueStore({ filePath: config.timelineScreenshotQueueFile });
     this.reminderQueue = new ReminderQueueStore({ filePath: config.reminderQueueFile });
@@ -162,6 +164,7 @@ class CyberbossApp {
       sessionStore: this.runtimeAdapter.getSessionStore(),
       runtimeId: this.runtimeAdapter.describe().id,
       onDeferredSystemReply: (payload) => this.deferSystemReply(payload),
+      onDeliveryFailure: (payload) => this.recordDeliveryFailure(payload),
     });
     this.pendingOperationByRunKey = new Map();
     this.autoCompactService = new AutoCompactService({ config });
@@ -347,6 +350,7 @@ class CyberbossApp {
           assertWeixinUpdateResponse(response);
         }
         consecutiveFailures = 0;
+        await this.flushDeliveryFailureNotices(channelId, channel);
         const messages = isWeixinChannel
           ? sortInboundUpdateMessages(Array.isArray(response?.msgs) ? response.msgs : [])
           : (Array.isArray(response?.msgs) ? response.msgs : []);
@@ -2316,6 +2320,61 @@ class CyberbossApp {
     });
   }
 
+  recordDeliveryFailure({
+    channelId = "",
+    userId = "",
+    contextToken = "",
+    threadId = "",
+    turnId = "",
+    itemId = "",
+    text = "",
+    error = null,
+    kind = "plain_reply",
+  } = {}) {
+    const normalizedChannelId = normalizeCommandArgument(channelId).toLowerCase();
+    if (normalizedChannelId !== "telegram") {
+      return null;
+    }
+    const now = new Date().toISOString();
+    return this.deliveryFailureQueue.enqueue({
+      channelId: normalizedChannelId,
+      userId,
+      contextToken,
+      threadId,
+      turnId,
+      itemId,
+      text,
+      kind,
+      createdAt: now,
+      failedAt: now,
+      errorName: error?.name || "",
+      errorCode: error?.code ?? "",
+      lastError: error instanceof Error ? error.message : String(error || ""),
+    });
+  }
+
+  async flushDeliveryFailureNotices(channelId, channel) {
+    if (channelId !== "telegram" || !channel || typeof channel.sendText !== "function") {
+      return;
+    }
+    const [failure] = this.deliveryFailureQueue.pendingForChannel(channelId, 1);
+    if (!failure) {
+      return;
+    }
+    try {
+      await channel.sendText({
+        userId: failure.userId,
+        contextToken: failure.contextToken,
+        text: formatDeliveryFailureNotice(failure),
+        preserveBlock: true,
+      });
+      this.deliveryFailureQueue.markNotified(failure.id);
+      console.warn(`[cyberboss] sent delivery failure notice channel=${channelId} user=${failure.userId}`);
+    } catch (error) {
+      console.warn(`[cyberboss] delivery failure notice still pending channel=${channelId}: ${formatErrorMessage(error)}`);
+    }
+  }
+
   async handleEffortCommand(normalized, command) {
     const runtime = this.runtimeAdapter.describe();
     if (runtime.id !== "codex") {
@@ -3590,6 +3649,12 @@ function parseNumericOrderValue(value) {
 const DEFERRED_REPLY_NOTICE = "由于微信 context_token 的限制，上轮对话里有一部分内容当时没能送达；这次用户再次发来消息、context_token 刷新后，先把遗留内容补上。如果这种情况反复出现，可发送 /chunk <数字>（例如 /chunk 50）调大最小合并字符数，减少消息分片。";
 const DEFERRED_PLAIN_REPLY_HEADER = "===== 上轮对话遗留内容 =====";
 const DEFERRED_SYSTEM_REPLY_HEADER = "===== 期间模型主动联系 =====";
+
+function formatDeliveryFailureNotice(failure) {
+  const failedAt = formatWechatLocalTime(failure?.failedAt);
+  const timeText = failedAt ? `（${failedAt}）` : "";
+  return `⚠️ 我之前${timeText}已经生成过一条回复，但 Telegram 投递失败，无法确认你是否收到。网络恢复后这条提醒才送达。`;
+}
 
 function formatDeferredSystemReplyText(text) {
   const normalized = String(text || "").trim();

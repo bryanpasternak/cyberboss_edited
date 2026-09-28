@@ -161,6 +161,9 @@ CYBERBOSS_VISION_API_BASE_URL=
 CYBERBOSS_VISION_API_KEY=
 CYBERBOSS_VISION_MODEL=
 CYBERBOSS_VISION_TIMEOUT_MS=30000
+CYBERBOSS_XHS_CACHE_DIR=
+CYBERBOSS_XHS_FFMPEG_PATH=ffmpeg
+CYBERBOSS_XHS_FFPROBE_PATH=ffprobe
 CYBERBOSS_ACCOUNT_ID=
 CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS=20
 CYBERBOSS_WEIXIN_BASE_URL=https://ilinkai.weixin.qq.com
@@ -213,10 +216,14 @@ CYBERBOSS_LOCATION_BATTERY_HISTORY_LIMIT=100
   配置可选的 OpenAI-compatible 识图 caption API，供 DeepSeek 这类文本模型使用。Qwen/DashScope 可从 [templates/vision-openai-compatible.env](./templates/vision-openai-compatible.env) 开始。
 - `CYBERBOSS_VISION_TIMEOUT_MS`
   单张图片 caption 请求超时时间。
+- `CYBERBOSS_XHS_CACHE_DIR`、`CYBERBOSS_XHS_FFMPEG_PATH`、`CYBERBOSS_XHS_FFPROBE_PATH`
+  配置小红书图文/视频读取缓存和 ffmpeg 路径。未安装 ffmpeg 时仍会返回标题、正文、作者、封面和图集，只跳过视频抽帧；安装命令、全部限制项与验收步骤见 [小红书读取实现方案](./docs/xhs-reader-implementation-plan-2026-08-31.md)。
 - `CYBERBOSS_WEIXIN_MIN_CHUNK_CHARS`
   设置微信短分片合并阈值默认值。
 - `CYBERBOSS_TELEGRAM_MIN_CHUNK_CHARS`
   设置 Telegram 短分片合并阈值默认值。
+- `CYBERBOSS_TELEGRAM_STREAM_DELIVERY`、`CYBERBOSS_TELEGRAM_STREAM_FLUSH_BYTES`
+  可选开启 Telegram 长回复的增量封口发送，并设置每个提前发送片段的目标 UTF-8 字节数。默认关闭；代理发送失败后，本轮会停止继续提前发送并在完成阶段走原有投递路径。
 - `CYBERBOSS_WEIXIN_BASE_URL`、`CYBERBOSS_WEIXIN_CDN_BASE_URL`、`CYBERBOSS_WEIXIN_QR_BOT_TYPE`
   在特殊部署环境下覆盖微信桥接接口地址和二维码 bot 类型。
 - `CYBERBOSS_ENABLE_LOCATION_SERVER`
@@ -469,17 +476,20 @@ ${HOME}/.cyberboss
 - `cyberboss_sticker_delete`
 - `cyberboss_sticker_save_from_inbox`
 - `cyberboss_sticker_update`
+- `cyberboss_xhs_read`
 - `cyberboss_system_send`
 
 ### Agent 使用约定
 
 - diary、reminder、timeline、screenshot、file-send 这类 Cyberboss 能力使用项目工具
+- 收到小红书分享链接时调用 `cyberboss_xhs_read`，并按索引顺序读取返回的 `images` 与 `videoFrames` 本地文件；视频帧不含音频
 - 终端给人手动使用的仍然是 `README`、`--help` 和 [docs/commands.md](./docs/commands.md) 中的生命周期入口
 - 第一次执行失败时，先反馈报错，不要立刻读源码
 
 ## 文档入口
 
 - [docs/commands.md](./docs/commands.md)
+- [小红书图文/视频读取实现方案](./docs/xhs-reader-implementation-plan-2026-08-31.md)
 
 <a id="faq"></a>
 ## FAQ

@@ -7,7 +7,9 @@ const store = require("./lib/store");
 const { enqueueSystemMessage, PUSH_ENABLED } = require("./lib/push");
 const { parseEpub } = require("./lib/epub");
 const { parseTxt } = require("./lib/txt");
+const { parseTex, parsePdf } = require("./lib/paper");
 const { importParsed } = require("./lib/import");
+const { paragraphText } = require("./lib/content");
 
 const PORT = Number(process.env.READING_PORT || 18004);
 const DWELL_MS = Number(process.env.READING_DWELL_MS || 15000);
@@ -48,8 +50,9 @@ function pushOpen(bs, manifest) {
   const ch = bs.lastPos ? manifest.chapters[bs.lastPos.chapter] : manifest.chapters[0];
   enqueueSystemMessage(
     `【共读·开卷】${READER_NAME}翻开了《${manifest.title}》（${ch ? ch.title : "开头"} · 进度${pct(bs, manifest)}%）。\n` +
-    `共读模式开启：合上书之前请安静陪读。读过的每一页会随阅读推送过来；` +
-    `有感悟就写页边批注（POST /api/annotate），没话说就保持沉默。`
+    `共读模式开启：先在聊天里告诉${READER_NAME}你知道了。合上书之前陪着${READER_NAME}一起读，读过的每一页会随阅读推送过来。\n` +
+    `收到正文不必每条都回应；有真实想说的话时，可以按当下感觉选择在聊天里回复，或写页边批注（POST /api/annotate）。` +
+    `批注可以做文学赏析，但别太冗长，随意一点。${READER_NAME}写的批注也不必每条都回，但真正触动你、值得回应的时候别偷懒。`
   );
 }
 
@@ -89,11 +92,10 @@ function evaluatePending(state, bookId) {
   const texts = [];
   let chars = 0;
   for (const seq of missing) {
-    const para = chapter.paragraphs[seq - chapter.baseSeq];
-    if (typeof para === "string") {
-      texts.push(para);
-      chars += para.length;
-    }
+    const para = paragraphText(chapter.paragraphs[seq - chapter.baseSeq]);
+    if (!para) continue;
+    texts.push(para);
+    chars += para.length;
   }
   if (!texts.length) return;
 
@@ -214,8 +216,8 @@ function createAnnotation(body, { gate = false } = {}) {
       for (let s = rs; s <= re; s += 1) {
         const ch = chapterOfSeq(manifest, s);
         const chapter = store.readChapter(bookId, ch.idx);
-        const para = chapter.paragraphs[s - ch.baseSeq];
-        if (typeof para !== "string") continue;
+        const para = paragraphText(chapter.paragraphs[s - ch.baseSeq]);
+        if (!para) continue;
         const at = para.indexOf(quote);
         if (at >= 0) {
           matches.push({ seq: s, startOff: at, endOff: at + quote.length, preview: para.slice(0, 40) });
@@ -228,8 +230,8 @@ function createAnnotation(body, { gate = false } = {}) {
         for (let s = rs; s <= re; s += 1) {
           const ch = chapterOfSeq(manifest, s);
           const chapter = store.readChapter(bookId, ch.idx);
-          const para = chapter.paragraphs[s - ch.baseSeq];
-          if (typeof para !== "string") continue;
+          const para = paragraphText(chapter.paragraphs[s - ch.baseSeq]);
+          if (!para) continue;
           const normPara = norm(para);
           const at = normPara.indexOf(normQuote);
           if (at >= 0) {
@@ -256,8 +258,8 @@ function createAnnotation(body, { gate = false } = {}) {
       for (const [rs] of bs.pushedRanges) {
         const ch = chapterOfSeq(manifest, rs);
         const chapter = store.readChapter(bookId, ch.idx);
-        const para = chapter.paragraphs[rs - ch.baseSeq];
-        if (typeof para === "string") { sample = para.slice(0, 80); break; }
+        const para = paragraphText(chapter.paragraphs[rs - ch.baseSeq]);
+        if (para) { sample = para.slice(0, 80); break; }
       }
       return { status: 404, json: { error: "quote not found in unlocked text（只能批注已解锁的内容，且必须与原文逐字一致）", hint: "原文样本（注意标点全角/半角）", sample } };
     }
@@ -268,10 +270,10 @@ function createAnnotation(body, { gate = false } = {}) {
     const chapterIdx = Number(body.chapter);
     const paraIdx = Number(body.paraIdx);
     const chapter = store.readChapter(bookId, chapterIdx);
-    if (!chapter || typeof chapter.paragraphs[paraIdx] !== "string") {
+    if (!chapter || !paragraphText(chapter.paragraphs[paraIdx])) {
       return { status: 400, json: { error: "bad anchor" } };
     }
-    const para = chapter.paragraphs[paraIdx];
+    const para = paragraphText(chapter.paragraphs[paraIdx]);
     startOff = Math.max(0, Number(body.startOff) || 0);
     endOff = Math.min(para.length, Number(body.endOff) || 0);
     if (endOff <= startOff) return { status: 400, json: { error: "bad offsets" } };
@@ -348,7 +350,7 @@ function createBookmark(body) {
   if (bookmarks.some((m) => m.seq === seq)) return { status: 409, json: { error: "bookmark exists" } };
   const ch = chapterOfSeq(manifest, seq);
   const chapter = store.readChapter(bookId, ch.idx);
-  const para = chapter ? chapter.paragraphs[seq - ch.baseSeq] : "";
+  const para = chapter ? paragraphText(chapter.paragraphs[seq - ch.baseSeq]) : "";
   const bookmark = {
     id: store.newId(),
     seq,
@@ -417,8 +419,8 @@ function gateText(bookId, from, to) {
     }
     const ch = chapterOfSeq(manifest, seq);
     const chapter = store.readChapter(bookId, ch.idx);
-    const para = chapter.paragraphs[seq - ch.baseSeq];
-    if (typeof para === "string") paragraphs.push({ seq, chapter: ch.idx, chapterTitle: ch.title, text: para });
+    const para = paragraphText(chapter.paragraphs[seq - ch.baseSeq]);
+    if (para) paragraphs.push({ seq, chapter: ch.idx, chapterTitle: ch.title, text: para });
   }
   return { status: 200, json: { paragraphs, locked: locked.length ? `${locked.length}段未解锁` : undefined } };
 }
@@ -435,8 +437,8 @@ function gateSearch(bookId, q) {
     for (let seq = rs; seq <= re && hits.length < 20; seq += 1) {
       const ch = chapterOfSeq(manifest, seq);
       const chapter = store.readChapter(bookId, ch.idx);
-      const para = chapter.paragraphs[seq - ch.baseSeq];
-      if (typeof para === "string" && para.includes(query)) {
+      const para = paragraphText(chapter.paragraphs[seq - ch.baseSeq]);
+      if (para && para.includes(query)) {
         hits.push({ seq, chapter: ch.idx, chapterTitle: ch.title, text: para });
       }
     }
@@ -453,6 +455,7 @@ function send(res, status, json) {
 }
 
 const IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+const PDFJS_BUILD_DIR = path.join(__dirname, "node_modules", "pdfjs-dist", "build");
 
 function readRawBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -545,17 +548,40 @@ const server = http.createServer(async (req, res) => {
       return fs.createReadStream(file).pipe(res);
     }
 
+    if (req.method === "GET" && (m = p.match(/^\/api\/asset\/([\w-]+)\/([a-zA-Z0-9_.-]+)$/))) {
+      const manifest = store.readManifest(m[1]);
+      const asset = manifest?.assets?.find((item) => item.name === m[2]);
+      if (!asset) return send(res, 404, { error: "unknown asset" });
+      const file = path.join(store.bookDir(m[1]), "assets", asset.name);
+      if (!fs.existsSync(file)) return send(res, 404, { error: "asset missing" });
+      res.writeHead(200, { "Content-Type": asset.mediaType, "Cache-Control": "private, max-age=86400" });
+      return fs.createReadStream(file).pipe(res);
+    }
+
+    if (req.method === "GET" && ["/api/vendor/pdf.min.mjs", "/api/vendor/pdf.worker.min.mjs"].includes(p)) {
+      const filename = path.basename(p);
+      const file = path.join(PDFJS_BUILD_DIR, filename);
+      if (!fs.existsSync(file)) return send(res, 503, { error: "PDF.js 未安装" });
+      res.writeHead(200, { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "public, max-age=86400" });
+      return fs.createReadStream(file).pipe(res);
+    }
+
     if (req.method === "POST" && p === "/api/import") {
       // 前端上传：文件二进制作请求体，文件名走查询参数（免 multipart）
       try {
         const filename = decodeURIComponent(url.searchParams.get("filename") || "");
         const ext = path.extname(filename).toLowerCase();
-        if (![".epub", ".txt"].includes(ext)) return send(res, 400, { error: "只支持 .epub 和 .txt" });
+        if (![".epub", ".txt", ".tex", ".pdf"].includes(ext)) {
+          return send(res, 400, { error: "只支持 .epub、.txt、.tex 和 .pdf" });
+        }
         const buffer = await readRawBody(req, IMPORT_MAX_BYTES);
         if (!buffer.length) return send(res, 400, { error: "empty file" });
-        const parsed = ext === ".epub"
-          ? parseEpub(buffer)
-          : parseTxt(buffer, { fallbackTitle: path.basename(filename, ext) });
+        const fallbackTitle = path.basename(filename, ext);
+        let parsed;
+        if (ext === ".epub") parsed = parseEpub(buffer);
+        else if (ext === ".txt") parsed = parseTxt(buffer, { fallbackTitle });
+        else if (ext === ".tex") parsed = parseTex(buffer, { fallbackTitle });
+        else parsed = await parsePdf(buffer, { fallbackTitle });
         const book = importParsed(parsed, {
           bookId: url.searchParams.get("id") || undefined,
           sourceFile: filename,

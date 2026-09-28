@@ -88,7 +88,7 @@ const DROP_BELOW = 0.06;
 const FIXATION_DRIVE_BOOST = 0.35;
 const FATIGUE_REST_GATE = 0.72;
 const HOUR_MS = 60 * 60 * 1000;
-const THOUGHT_RESOLUTIONS = ["shared", "messaged", "initiated", "journaled", "faded", "sex"];
+const THOUGHT_RESOLUTIONS = ["shared", "messaged", "initiated", "explored", "journaled", "faded", "sex"];
 
 const DEFAULT_LIBIDO_CONFIG = {
   enabled: true,
@@ -270,6 +270,19 @@ function selectThoughtsForCheckin(state, limit = 3) {
   const normalized = normalizeState(state);
   return normalized.thoughts
     .filter((thought) => thought.drive === "libido" && thought.status === "pending")
+    .sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === "fixation" ? -1 : 1;
+      if (left.strength !== right.strength) return right.strength - left.strength;
+      if (left.lastSurfacedAt !== right.lastSurfacedAt) return left.lastSurfacedAt - right.lastSurfacedAt;
+      return right.bornAt - left.bornAt;
+    })
+    .slice(0, Math.max(0, Number.parseInt(limit, 10) || 0));
+}
+
+function selectGeneralThoughtsForCheckin(state, limit = 2) {
+  const normalized = normalizeState(state);
+  return normalized.thoughts
+    .filter((thought) => thought.drive !== "libido" && thought.status === "pending")
     .sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === "fixation" ? -1 : 1;
       if (left.strength !== right.strength) return right.strength - left.strength;
@@ -720,6 +733,7 @@ module.exports = {
   recordLibidoEvent,
   shouldPromptEroticThought,
   selectThoughtsForCheckin,
+  selectGeneralThoughtsForCheckin,
   markThoughtsSurfaced,
   markThoughtPrompted,
   resolveThought,

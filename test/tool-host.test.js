@@ -90,6 +90,8 @@ function createHost() {
         collect({ id }) { return { id, type: "gift", status: "collected" }; },
       },
       postcard: {
+        prepare() { return { id: "postcard-draft-1", type: "postcard", status: "awaiting_art", artRequest: { prompt: "moon, no text" } }; },
+        finalize({ id }) { return { id, type: "postcard", status: "sent", publicData: { side: "front" }, displayAsset: { filePath: "/tmp/postcard.png" }, callbackData: `postcard:flip:${id}:back` }; },
         send() { return { id: "postcard-1", type: "postcard", publicData: { side: "front" }, callbackData: "postcard:flip:postcard-1:back" }; },
         flip({ id, side }) { return { id, type: "postcard", publicData: { side: side || "back" } }; },
       },
@@ -218,6 +220,19 @@ function createHost() {
           return { outputFile: "/tmp/shot.png", ...args };
         },
       },
+      xhs: {
+        async read(args) {
+          return {
+            sourceUrl: args.url,
+            finalUrl: args.url,
+            note: { id: "note-1", title: "猫站长", text: "正文" },
+            images: [{ index: 1, absolutePath: "/tmp/xhs/image-01.jpg" }],
+            videoFrames: [],
+            videoProcessing: { status: "ffmpeg_unavailable" },
+            cache: { hit: false },
+          };
+        },
+      },
       whereabouts: {
         getSnapshot(args) {
           return {
@@ -332,11 +347,25 @@ test("tool host exposes desire, thought lifecycle, and libido event tools", asyn
   assert.deepEqual(libidoResult.data.libidoEvent, { event: "sex_completed", thoughtIds: ["thought-1"] });
 });
 
+test("tool host exposes the XHS reader and tells the agent to inspect local images", async () => {
+  const host = createHost();
+  const spec = host.listTools().find((tool) => tool.name === "cyberboss_xhs_read");
+  assert.ok(spec);
+  assert.match(spec.description, /Read\/view_image/);
+  const result = await host.invokeTool("cyberboss_xhs_read", {
+    url: "https://xhslink.com/test",
+  }, {});
+  assert.equal(result.data.note.title, "猫站长");
+  assert.match(result.text, /Read all 1 image paths in index order/);
+});
+
 test("tool host exposes independent gift, postcard, travel card, and cabinet tools", async () => {
   const host = createHost();
   const gift = await host.invokeTool("cyberboss_gift_send", { giftName: "月亮" }, {});
   const opened = await host.invokeTool("cyberboss_gift_open", { id: "gift-1" }, {});
   const collected = await host.invokeTool("cyberboss_gift_collect", { id: "gift-1" }, {});
+  const draft = await host.invokeTool("cyberboss_postcard_prepare", { message: "想你。", visualBrief: "月亮和海" }, {});
+  const finalized = await host.invokeTool("cyberboss_postcard_finalize", { id: "postcard-draft-1", sourceImagePath: "/tmp/generated.png" }, {});
   const postcard = await host.invokeTool("cyberboss_postcard_send", { message: "想你。" }, {});
   const flipped = await host.invokeTool("cyberboss_postcard_flip", { id: "postcard-1", side: "back" }, {});
   const travel = await host.invokeTool("cyberboss_travel_card_create", {
@@ -348,6 +377,9 @@ test("tool host exposes independent gift, postcard, travel card, and cabinet too
   assert.equal(gift.data.status, "wrapped");
   assert.equal(opened.data.publicData.giftName, "月亮");
   assert.equal(collected.data.status, "collected");
+  assert.equal(draft.data.status, "awaiting_art");
+  assert.match(draft.text, /image-generation tool/);
+  assert.equal(finalized.data.status, "sent");
   assert.equal(postcard.data.publicData.side, "front");
   assert.equal(flipped.data.publicData.side, "back");
   assert.equal(travel.data.type, "travel_card");

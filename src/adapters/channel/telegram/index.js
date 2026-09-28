@@ -40,12 +40,16 @@ const {
 const DEFAULT_LONG_POLL_TIMEOUT_S = 30;
 const MAX_TELEGRAM_TEXT_BYTES = 4096;
 const SEND_MESSAGE_INTERVAL_MS = 350;
+const DEFAULT_TELEGRAM_STREAM_FLUSH_BYTES = 3800;
+const MIN_TELEGRAM_STREAM_FLUSH_BYTES = 256;
 
 function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) {
   let selectedAccount = null;
   const inboundFilter = createInboundFilter();
   const offsetStore = new TelegramOffsetStore({ filePath: config.telegramOffsetFile });
   let minTelegramChunk = loadTelegramConfig(config).minChunkChars;
+  const streamFlushBytes = normalizeTelegramStreamFlushBytes(config.telegramStreamFlushBytes);
+  const sendTimeoutMs = Math.max(5_000, Number(config.telegramSendTimeoutMs) || 45_000);
 
   function ensureAccount() {
     if (!selectedAccount) {
@@ -78,6 +82,7 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
         chatId,
         text: chunk,
         parseMode,
+        timeoutMs: sendTimeoutMs,
         replyMarkup: index === chunks.length - 1 ? replyMarkup : null,
       });
       if (index < chunks.length - 1) {
@@ -116,6 +121,12 @@ function createTelegramChannelAdapter(config, { identityMapStore = null } = {}) 
           supportsAttachments: true,
           supportsChunkConfig: true,
           supportsHtml: true,
+          incrementalTextDelivery: {
+            mode: "sealed_chunks",
+            enabled: config.telegramStreamDelivery === true,
+            targetBytes: streamFlushBytes,
+            hardMaxBytes: MAX_TELEGRAM_TEXT_BYTES,
+          },
           media: {
             send: ["photo", "document", "video", "audio", "voice", "animation"],
             caption: true,
@@ -485,6 +496,16 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function normalizeTelegramStreamFlushBytes(value) {
+  const parsed = Number.parseInt(String(value), 10);
+  if (Number.isFinite(parsed)
+    && parsed >= MIN_TELEGRAM_STREAM_FLUSH_BYTES
+    && parsed < MAX_TELEGRAM_TEXT_BYTES) {
+    return parsed;
+  }
+  return DEFAULT_TELEGRAM_STREAM_FLUSH_BYTES;
+}
+
 module.exports = {
   buildCallbackInboundUpdate,
   buildTelegramReplyMarkup,
@@ -499,4 +520,5 @@ module.exports = {
   splitForTelegram,
   sliceUtf8,
   resolveTelegramMediaKind,
+  normalizeTelegramStreamFlushBytes,
 };

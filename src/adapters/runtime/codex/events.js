@@ -78,6 +78,7 @@ function mapCodexMessageToRuntimeEvent(message) {
         turnId,
         itemId: normalizeString(params?.itemId || params?.item?.id),
         text,
+        textMode: typeof params?.delta === "string" ? "delta" : "snapshot",
       },
     };
   }

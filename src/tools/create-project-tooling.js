@@ -16,6 +16,7 @@ const { createDesireService } = require("../services/desire-service");
 const { createChatMemoryRuntime } = require("../services/chat-memory");
 const { createMementoServices } = require("../services/mementos");
 const { createLifeCalendarServices } = require("../services/life-calendar");
+const { XhsReaderService } = require("../services/xhs-reader");
 const { RuntimeContextStore } = require("./runtime-context-store");
 const { ProjectToolHost } = require("./tool-host");
 const { WhereaboutsService } = require("whereabouts-mcp");
@@ -77,6 +78,7 @@ function createProjectTooling(config, options = {}) {
     lifeCalendar,
     sticker: new StickerService({ config, channelAdapter, sessionStore, channelFileService: channelFile }),
     timeline: new TimelineService({ config, timelineIntegration, sessionStore }),
+    xhs: new XhsReaderService({ config }),
     whereabouts: new WhereaboutsService({
       config: {
         storeFile: config.locationStoreFile,

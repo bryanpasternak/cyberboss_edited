@@ -95,11 +95,12 @@ async function request({
   method,
   body = null,
   timeoutMs = DEFAULT_TIMEOUT_MS,
+  timeoutGraceMs = 5_000,
   label = "telegram",
 }) {
   const url = buildEndpoint(baseUrl, botToken, method);
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs + 5_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs + timeoutGraceMs);
   try {
     const response = await fetchWithProxy(url, {
       method: "POST",
@@ -168,6 +169,7 @@ async function sendMessage({
   disablePreview = true,
   replyToMessageId = 0,
   replyMarkup = null,
+  timeoutMs,
 }) {
   const body = {
     chat_id: chatId,
@@ -185,7 +187,12 @@ async function sendMessage({
   if (replyMarkup && typeof replyMarkup === "object") {
     body.reply_markup = replyMarkup;
   }
-  return request({ baseUrl, botToken, method: "sendMessage", body, label: "telegram" });
+  const requestOptions = { baseUrl, botToken, method: "sendMessage", body, label: "telegram" };
+  if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
+    requestOptions.timeoutMs = timeoutMs;
+    requestOptions.timeoutGraceMs = 0;
+  }
+  return request(requestOptions);
 }
 
 async function answerCallbackQuery({ baseUrl, botToken, callbackQueryId, text = "" }) {

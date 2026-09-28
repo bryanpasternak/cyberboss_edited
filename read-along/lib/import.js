@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 const { BOOKS_DIR, writeJson, readManifest } = require("./store");
+const { paragraphText } = require("./content");
 
 function splitParagraphs(text) {
   return String(text)
@@ -28,9 +29,11 @@ function importParsed(parsed, { bookId, sourceFile = "", allowOverwrite = true }
   let totalChars = 0;
   const chapters = [];
   parsed.sections.forEach((section) => {
-    const paragraphs = splitParagraphs(section.text);
+    const paragraphs = Array.isArray(section.blocks)
+      ? section.blocks.filter((item) => paragraphText(item).trim())
+      : splitParagraphs(section.text);
     if (!paragraphs.length) return;
-    const chars = paragraphs.reduce((sum, p) => sum + p.length, 0);
+    const chars = paragraphs.reduce((sum, p) => sum + paragraphText(p).length, 0);
     const chapter = {
       idx: chapters.length,
       title: section.title,
@@ -52,6 +55,18 @@ function importParsed(parsed, { bookId, sourceFile = "", allowOverwrite = true }
     fs.writeFileSync(path.join(dir, `cover${coverExt}`), parsed.cover.data);
   }
 
+  const assets = [];
+  if (Array.isArray(parsed.assets) && parsed.assets.length) {
+    const assetsDir = path.join(dir, "assets");
+    fs.mkdirSync(assetsDir, { recursive: true });
+    for (const asset of parsed.assets) {
+      const name = path.basename(String(asset?.name || "")).replace(/[^a-zA-Z0-9_.-]/g, "");
+      if (!name || !Buffer.isBuffer(asset?.data)) continue;
+      fs.writeFileSync(path.join(assetsDir, name), asset.data);
+      assets.push({ name, mediaType: String(asset.mediaType || "application/octet-stream") });
+    }
+  }
+
   const manifest = {
     bookId: id,
     title,
@@ -62,6 +77,8 @@ function importParsed(parsed, { bookId, sourceFile = "", allowOverwrite = true }
     paraCount: seq,
     totalChars,
     coverExt,
+    contentKind: String(parsed.contentKind || "book"),
+    assets,
     chapters,
   };
   writeJson(path.join(dir, "manifest.json"), manifest);

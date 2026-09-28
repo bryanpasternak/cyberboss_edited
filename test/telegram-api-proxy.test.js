@@ -3,7 +3,44 @@ const assert = require("node:assert/strict");
 const http = require("node:http");
 const net = require("node:net");
 
-const { sendDocument } = require("../src/adapters/channel/telegram/api");
+const { sendDocument, sendMessage } = require("../src/adapters/channel/telegram/api");
+
+test("Telegram sendMessage honors an explicit abort timeout", async (t) => {
+  const proxyKeys = [
+    "CYBERBOSS_TELEGRAM_PROXY",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "HTTP_PROXY",
+    "http_proxy",
+  ];
+  const previous = new Map(proxyKeys.map((key) => [key, process.env[key]]));
+  for (const key of proxyKeys) delete process.env[key];
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (_url, init) => new Promise((_resolve, reject) => {
+    init.signal.addEventListener("abort", () => {
+      const error = new Error("This operation was aborted");
+      error.name = "AbortError";
+      reject(error);
+    }, { once: true });
+  });
+  t.after(() => {
+    globalThis.fetch = originalFetch;
+    for (const [key, value] of previous.entries()) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  const startedAt = Date.now();
+  await assert.rejects(sendMessage({
+    baseUrl: "https://api.telegram.test",
+    botToken: "test-token",
+    chatId: "12345",
+    text: "timeout test",
+    timeoutMs: 30,
+  }), { name: "AbortError" });
+  assert.ok(Date.now() - startedAt < 1_000);
+});
 
 test("Telegram proxy upload sends a real multipart document body", async (t) => {
   const received = {};

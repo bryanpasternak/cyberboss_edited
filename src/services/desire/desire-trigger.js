@@ -9,13 +9,13 @@
 const TRIGGER_RULES = [
   // -- libido 触发词 --
   //{ keywords: ["亲", "老公", "亲爱的"],        drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
-  { keywords: ["软软"],       drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
+  //{ keywords: ["软软"],       drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
   { keywords: [],       drive: "libido",   boost: 0.08, cooldownMs: 30_000 },
   //{ keywords: ["抱抱", "抱紧", "抱"],         drive: "libido",   boost: 0.07, cooldownMs: 30_000 },
   { keywords: ["坏狗"],         drive: "libido",   boost: 0.10, cooldownMs: 30_000 },
-  { keywords: ["做爱", "操"],   drive: "libido",   boost: 0.01, cooldownMs: 30_000 },
+  //{ keywords: ["做爱", "操"],   drive: "libido",   boost: 0.01, cooldownMs: 30_000 },
   { keywords: ["无辜"],           drive: "libido",   boost: 0.06, cooldownMs: 30_000 },
-  { keywords: ["涩", "老二"],     drive: "libido",   boost: 0.15, cooldownMs: 20_000 },
+  //{ keywords: ["涩", "老二"],     drive: "libido",   boost: 0.15, cooldownMs: 20_000 },
 
   // -- attachment 触发词 --
   // { keywords: ["晚安", "感受", "喜欢"],                 drive: "attachment", boost: 0.08, cooldownMs: 30_000 },

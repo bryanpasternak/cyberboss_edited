@@ -35,6 +35,21 @@ function renderPostcardBack({ from, to, date, message, stamp }) {
   ].join("\n");
 }
 
+function renderLetterSheet({ from, to, date, message, title = "写给你的一封信" } = {}) {
+  const messageLines = wrapText(message, 30);
+  const height = Math.max(600, 250 + (messageLines.length * 38));
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="${height}" viewBox="0 0 900 ${height}">`,
+    `<rect width="900" height="${height}" fill="#f4ead8"/>`,
+    `<rect x="35" y="35" width="830" height="${height - 70}" fill="none" stroke="#9b7862" stroke-width="3"/>`,
+    `<text x="75" y="92" font-family="sans-serif" font-size="16" fill="#806c60">TO / ${escapeXml(to)}　·　${escapeXml(date)}</text>`,
+    `<text x="75" y="150" font-family="serif" font-size="38" font-weight="700" fill="#493c35">${escapeXml(title)}</text>`,
+    ...messageLines.map((line, index) => `<text x="75" y="${220 + (index * 38)}" font-family="serif" font-size="24" fill="#493c35">${escapeXml(line)}</text>`),
+    `<text x="825" y="${height - 72}" text-anchor="end" font-family="serif" font-size="20" fill="#8c4e61">${escapeXml(from)}</text>`,
+    "</svg>",
+  ].join("\n");
+}
+
 function wrapText(value, limit) {
   const chars = Array.from(String(value || ""));
   const lines = [];
@@ -51,4 +66,4 @@ function escapeXml(value) {
     .replace(/'/g, "&apos;");
 }
 
-module.exports = { renderCard, renderPostcardBack, escapeXml, wrapText };
+module.exports = { renderCard, renderLetterSheet, renderPostcardBack, escapeXml, wrapText };

@@ -2,7 +2,7 @@ const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
-const DATA_DIR = path.join(__dirname, "..", "data");
+const DATA_DIR = path.resolve(process.env.READING_DATA_DIR || path.join(__dirname, "..", "data"));
 const BOOKS_DIR = path.join(DATA_DIR, "books");
 const ANNO_DIR = path.join(DATA_DIR, "annotations");
 const MARK_DIR = path.join(DATA_DIR, "bookmarks");

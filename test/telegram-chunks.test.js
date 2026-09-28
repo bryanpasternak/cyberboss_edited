@@ -454,6 +454,31 @@ test("telegram inbound accepts a linked canonical identity in the allowlist", ()
   assert.equal(normalized.accountId, "wechat-account");
 });
 
+test("telegram adapter exposes sealed chunk delivery only when explicitly enabled", (t) => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "cyberboss-tg-stream-capability-"));
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  const disabled = createTelegramChannelAdapter(buildTelegramTestConfig(tempDir));
+  assert.deepEqual(disabled.describe().capabilities.incrementalTextDelivery, {
+    mode: "sealed_chunks",
+    enabled: false,
+    targetBytes: 3800,
+    hardMaxBytes: 4096,
+  });
+
+  const enabled = createTelegramChannelAdapter({
+    ...buildTelegramTestConfig(tempDir),
+    telegramStreamDelivery: true,
+    telegramStreamFlushBytes: 512,
+  });
+  assert.deepEqual(enabled.describe().capabilities.incrementalTextDelivery, {
+    mode: "sealed_chunks",
+    enabled: true,
+    targetBytes: 512,
+    hardMaxBytes: 4096,
+  });
+});
+
 function buildTelegramTestConfig(tempDir) {
   return {
     stateDir: tempDir,

@@ -19,12 +19,46 @@
 - **网页阅读器**（单文件、零依赖）：书架、分页阅读、进度记忆、两点点选划线批注、批注对话与跳回原文
 - **阅读器控制面板**：点击页面中部呼出（上一章/目录/设置/下一章）；字号、行距调节，夜间模式（手动或跟随系统）
 - **书签**：夹住当前页、一键跳回；书签是读者私有的，不会推送给 AI
-- **书籍导入**：网页端「＋导入」一键上传 EPUB / TXT（TXT 自动识别章节、GBK 编码自动回退），也可命令行导入
+- **书籍与论文导入**：网页端「＋导入」支持 EPUB / TXT / TeX / PDF；TeX 公式以浏览器原生 MathML 排版，论文插图和 PDF 原页可在阅读器里查看
 - **阅读事件推送**：开卷 / 每页原文 / 合卷（含本次与累计共读时长），推给你的 AI
 - **批注互动**：双方划线用不同颜色区分，每条划线下可以盖楼回复
 - **推送通道**：内置 cyberboss 系统消息队列支持；非 cyberboss 用户可用通用 webhook 模式
 
 ## 快速开始
+
+### 这台 Windows 电脑上的最短用法
+
+打开 PowerShell，先进入共读目录：
+
+```powershell
+cd C:\Users\19670\cyberboss\read-along
+```
+
+导入完整的 TeX 论文工程时，选择主 `.tex` 文件。比如当前这篇论文：
+
+```powershell
+node .\import-book.js "$env:USERPROFILE\Downloads\arXiv-2509.04664v1\MAIN_arxiv.tex" --id hallucination-paper
+```
+
+如果拿到的是单个 PDF：
+
+```powershell
+node .\import-book.js "C:\论文路径\paper.pdf" --id my-paper
+```
+
+`--id` 是书架里的内部名字：用简短、不重复的英文即可。导入后不需要在手机上安装 TeX 或 PDF 软件，刷新共读书架就能阅读。
+
+启动连接 Cyberboss 的共读服务：
+
+```powershell
+npm run start:cyberboss
+```
+
+这个窗口需要保持打开。以后需要重启时，在运行它的窗口按 `Ctrl+C`，再执行一次 `npm run start:cyberboss`。启动后可访问 `http://127.0.0.1:18004/health` 检查服务；返回包含 `"ok": true` 就说明已经正常运行。
+
+第一次安装依赖或 `package.json` 更新后，先在同一目录执行一次 `npm install`。日常导入新论文不需要重复安装。
+
+### 通用安装方式
 
 ```bash
 git clone https://github.com/luoluo-1121/read-along.git && cd read-along
@@ -33,9 +67,16 @@ npm install
 # 先跑起来（DRY-RUN 模式：推送只写日志，不外发）
 node server.js
 
-# 导入一本书（epub 或 txt；跑起来后也可以直接在网页书架上传）
+# 导入一本书或论文（epub / txt / tex / pdf；跑起来后也可以直接在网页书架上传）
 node import-book.js /path/to/book.epub --id mybook
+
+# 多文件 TeX 项目建议从命令行导入主文件；这样会一并读取同目录的 input/include 和本地插图
+node import-book.js /path/to/paper/MAIN.tex --id my-paper
 ```
+
+TeX 导入需要系统 PATH 中有 `pandoc`（也可用 `READING_PANDOC_PATH` 指定）。PDF 导入依赖随项目安装的 PDF.js；当前版本在 Node.js 22.13+ / 24+ 下受支持。手机端不需要安装 LaTeX、Pandoc 或 PDF 阅读器——转换发生在服务端，手机浏览器只负责显示排好的公式、表格、图片和原始 PDF 页面。
+
+网页上传单个 `.tex` 文件时无法同时取得它旁边的宏文件和插图；完整论文工程请用上面的命令行方式导入主 `.tex` 文件。导入之后，电脑和手机访问的是同一个普通网页阅读器。
 
 前端：把 `web/reader.html` 放到 nginx 下，API 反代到 `127.0.0.1:18004`（详见 [docs/DEPLOY.md](docs/DEPLOY.md)）。
 

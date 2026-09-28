@@ -8,9 +8,14 @@ const DEFERRED_PLAIN_REPLY_HEADER = "===== 上轮对话遗留内容 =====";
 const DEFERRED_SYSTEM_REPLY_HEADER = "===== 期间模型主动联系 =====";
 const CURRENT_REPLY_HEADER = "===== 本轮模型回复 =====";
 
-function createHarness({ sendText, getKnownContextTokens, runtimeId = "" } = {}) {
+function createHarness({ sendText, getKnownContextTokens, runtimeId = "", incrementalTextDelivery = null, onDeliveryFailure = null } = {}) {
   const sent = [];
   const channelAdapter = {
+    describe() {
+      return {
+        capabilities: incrementalTextDelivery ? { incrementalTextDelivery } : {},
+      };
+    },
     async sendText(payload) {
       if (typeof sendText === "function") {
         await sendText(payload, sent);
@@ -33,7 +38,7 @@ function createHarness({ sendText, getKnownContextTokens, runtimeId = "" } = {})
     },
   };
 
-  const streamDelivery = new StreamDelivery({ channelAdapter, sessionStore, runtimeId });
+  const streamDelivery = new StreamDelivery({ channelAdapter, sessionStore, runtimeId, onDeliveryFailure });
   return { sent, streamDelivery, bindingByThreadId };
 }
 
@@ -62,6 +67,54 @@ async function runCompletedTurnWithResultOnly(streamDelivery, { threadId, turnId
     payload: { threadId, turnId, text },
   });
 }
+
+test("telegram delivery abort is recorded once without an immediate completion retry", async () => {
+  let attempts = 0;
+  const failures = [];
+  const { streamDelivery } = createHarness({
+    async sendText() {
+      attempts += 1;
+      const error = new Error("This operation was aborted");
+      error.name = "AbortError";
+      error.code = 20;
+      throw error;
+    },
+    async onDeliveryFailure(failure) {
+      failures.push(failure);
+      return true;
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-tg-abort", {
+    userId: "10001",
+    contextToken: "tg:10001",
+    provider: "telegram",
+    channelId: "telegram",
+  });
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-tg-abort", turnId: "turn-tg-abort" },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.completed",
+    payload: {
+      threadId: "thread-tg-abort",
+      turnId: "turn-tg-abort",
+      itemId: "item-tg-abort",
+      text: "已经生成但没有送达的回复",
+    },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.completed",
+    payload: { threadId: "thread-tg-abort", turnId: "turn-tg-abort" },
+  });
+
+  assert.equal(attempts, 1);
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0].channelId, "telegram");
+  assert.equal(failures[0].text, "已经生成但没有送达的回复");
+  assert.equal(failures[0].error.name, "AbortError");
+});
 
 test("system silent JSON is suppressed", async () => {
   const { sent, streamDelivery } = createHarness();
@@ -563,4 +616,249 @@ test("plain reply with deferred prefix is sent as soon as the first item is fina
     contextToken: "ctx-8",
     preserveBlock: true,
   });
+});
+
+test("telegram sealed chunks are delivered before reply completion without repeating the tail", async () => {
+  const { sent, streamDelivery } = createHarness({
+    incrementalTextDelivery: {
+      mode: "sealed_chunks",
+      enabled: true,
+      targetBytes: 24,
+      hardMaxBytes: 30,
+      carryBytes: 0,
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-stream-1", {
+    userId: "user-stream-1",
+    contextToken: "tg:101",
+    provider: "telegram",
+  });
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-stream-1", turnId: "turn-stream-1" },
+  });
+  const fullText = "第一句。第二句。尾巴";
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-stream-1",
+      turnId: "turn-stream-1",
+      itemId: "item-stream-1",
+      text: fullText,
+    },
+  });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].text, "第一句。第二句。");
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.completed",
+    payload: {
+      threadId: "thread-stream-1",
+      turnId: "turn-stream-1",
+      itemId: "item-stream-1",
+      text: fullText,
+    },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.completed",
+    payload: { threadId: "thread-stream-1", turnId: "turn-stream-1", text: fullText },
+  });
+
+  assert.deepEqual(sent.map((entry) => entry.text), ["第一句。第二句。", "尾巴"]);
+});
+
+test("telegram sealed chunks keep the streamed tail when completion rewrites committed text", async () => {
+  const { sent, streamDelivery } = createHarness({
+    incrementalTextDelivery: {
+      mode: "sealed_chunks",
+      enabled: true,
+      targetBytes: 24,
+      hardMaxBytes: 30,
+      carryBytes: 0,
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-stream-2", {
+    userId: "user-stream-2",
+    contextToken: "tg:102",
+    provider: "telegram",
+  });
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-stream-2", turnId: "turn-stream-2" },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-stream-2",
+      turnId: "turn-stream-2",
+      itemId: "item-stream-2",
+      text: "第一句。第二句。流式尾巴",
+    },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.completed",
+    payload: {
+      threadId: "thread-stream-2",
+      turnId: "turn-stream-2",
+      itemId: "item-stream-2",
+      text: "完全改写的完成稿",
+    },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.completed",
+    payload: { threadId: "thread-stream-2", turnId: "turn-stream-2", text: "完全改写的完成稿" },
+  });
+
+  assert.deepEqual(sent.map((entry) => entry.text), ["第一句。第二句。", "流式尾巴"]);
+});
+
+test("telegram incremental delivery suspends after a proxy-like failure and falls back at completion", async () => {
+  let attempts = 0;
+  const { sent, streamDelivery } = createHarness({
+    incrementalTextDelivery: {
+      mode: "sealed_chunks",
+      enabled: true,
+      targetBytes: 24,
+      hardMaxBytes: 30,
+      carryBytes: 0,
+    },
+    async sendText(payload, successful) {
+      attempts += 1;
+      if (attempts === 1) throw new Error("proxy connection timed out");
+      successful.push(payload);
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-stream-3", {
+    userId: "user-stream-3",
+    contextToken: "tg:103",
+    provider: "telegram",
+  });
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-stream-3", turnId: "turn-stream-3" },
+  });
+  const fullText = "第一句。第二句。尾巴";
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-stream-3",
+      turnId: "turn-stream-3",
+      itemId: "item-stream-3",
+      text: fullText,
+    },
+  });
+  assert.equal(attempts, 1);
+  assert.deepEqual(sent, []);
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-stream-3",
+      turnId: "turn-stream-3",
+      itemId: "item-stream-3",
+      text: fullText,
+    },
+  });
+  assert.equal(attempts, 1);
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.completed",
+    payload: {
+      threadId: "thread-stream-3",
+      turnId: "turn-stream-3",
+      itemId: "item-stream-3",
+      text: fullText,
+    },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.completed",
+    payload: { threadId: "thread-stream-3", turnId: "turn-stream-3", text: fullText },
+  });
+
+  assert.equal(attempts, 2);
+  assert.deepEqual(sent.map((entry) => entry.text), [fullText]);
+});
+
+test("telegram structured actions remain buffered until completion", async () => {
+  const { sent, streamDelivery } = createHarness({
+    incrementalTextDelivery: {
+      mode: "sealed_chunks",
+      enabled: true,
+      targetBytes: 8,
+      hardMaxBytes: 12,
+      carryBytes: 0,
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-stream-4", {
+    userId: "user-stream-4",
+    contextToken: "tg:104",
+    provider: "telegram",
+  });
+
+  const action = '{"action":"send_message","message":"只发送这里"}';
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-stream-4", turnId: "turn-stream-4" },
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.delta",
+    payload: {
+      threadId: "thread-stream-4",
+      turnId: "turn-stream-4",
+      itemId: "item-stream-4",
+      text: action,
+    },
+  });
+  assert.deepEqual(sent, []);
+
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.reply.completed",
+    payload: {
+      threadId: "thread-stream-4",
+      turnId: "turn-stream-4",
+      itemId: "item-stream-4",
+      text: action,
+    },
+  });
+  assert.deepEqual(sent.map((entry) => entry.text), ["只发送这里"]);
+});
+
+test("telegram sealed chunks preserve repeated append-only Codex deltas", async () => {
+  const { sent, streamDelivery } = createHarness({
+    incrementalTextDelivery: {
+      mode: "sealed_chunks",
+      enabled: true,
+      targetBytes: 9,
+      hardMaxBytes: 12,
+      carryBytes: 0,
+    },
+  });
+  streamDelivery.queueReplyTargetForThread("thread-stream-repeat", {
+    userId: "user-stream-repeat",
+    contextToken: "tg:105",
+    provider: "telegram",
+  });
+  await streamDelivery.handleRuntimeEvent({
+    type: "runtime.turn.started",
+    payload: { threadId: "thread-stream-repeat", turnId: "turn-stream-repeat" },
+  });
+
+  for (let index = 0; index < 4; index += 1) {
+    await streamDelivery.handleRuntimeEvent({
+      type: "runtime.reply.delta",
+      payload: {
+        threadId: "thread-stream-repeat",
+        turnId: "turn-stream-repeat",
+        itemId: "item-stream-repeat",
+        text: "哈",
+        textMode: "delta",
+      },
+    });
+  }
+
+  assert.deepEqual(sent.map((entry) => entry.text), ["哈哈哈哈"]);
 });
